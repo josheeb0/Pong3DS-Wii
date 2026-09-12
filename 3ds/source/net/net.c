@@ -349,7 +349,15 @@ const char *pong_net_session(const PongNet *n) { return n ? n->session : ""; }
 
 bool pong_net_send(PongNet *n, const uint8_t *frame, size_t len)
 {
-if (!n || (n->state != PONG_LINK_OPEN && !(n->active == PONG_MODE_WEB && n->state == PONG_LINK_CONNECTING))) return false;
+    /*
+     * The HTTP path starts in CONNECTING: its worker thread has not completed
+     * the first request yet. HELLO and JOIN are queued right after open(), so
+     * refusing to queue while connecting would silently drop them and the
+     * client would sit in a lobby it never actually joined.
+     */
+    if (!n) return false;
+    bool web_warming = (n->active == PONG_MODE_WEB && n->state == PONG_LINK_CONNECTING);
+    if (n->state != PONG_LINK_OPEN && !web_warming) return false;
 
     if (n->active == PONG_MODE_LAN) {
         ssize_t w = send(n->sock, frame, len, 0);

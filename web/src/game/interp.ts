@@ -210,7 +210,13 @@ export class Clock {
   minRtt = 0;
 
   /** Feed a PONG. `serverTick` is the server's tick at the time it replied. */
-    const rtt = (((nowMs >>> 0) - (sentAtMs >>> 0)) >>> 0);
+  sample(sentAtMs: number, serverTimeMs: number, serverTick: number, nowMs: number): void {
+    // Plain subtraction, NOT 32-bit unsigned arithmetic. These are Date.now()
+    // milliseconds (~1.7e12), so `nowMs >>> 0` would truncate them to 32 bits
+    // and produce a meaningless RTT.
+    const rtt = nowMs - sentAtMs;
+    // Reject absurd samples rather than letting one poison the estimator.
+    if (rtt < 0 || rtt > 5000) return;
 
     // Where the server's tick counter stood when the reply reached us.
     const serverTickNow = serverTick + rtt / 2 / TICK_MS;

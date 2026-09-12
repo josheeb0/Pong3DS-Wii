@@ -129,7 +129,9 @@ const tcp = createTcpServer((sock: Socket) => {
   // A TCP client has no HTTP bootstrap, so it gets a session on connect and
   // receives its WELCOME as the first frame on the stream.
   const ctx = makeCtx();
-if (sessions.size >= config.maxSessions) {
+  // Refuse rather than accept-then-fail: a TCP client has no HTTP bootstrap to
+  // report a 503 through, so the honest signal is a closed connection.
+  if (sessions.size >= config.maxSessions) {
     sock.destroy();
     return;
   }
