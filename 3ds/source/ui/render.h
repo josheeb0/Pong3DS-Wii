@@ -28,6 +28,7 @@ typedef enum {
     MENU_QUICK = 0,   /* quick match: pair with anyone, 3DS vs browser preferred */
     MENU_ROOM,        /* join a room by code, so you can play someone specific */
     MENU_BOT,         /* practice against the CPU */
+    MENU_NAME,        /* the name the other player sees */
     MENU_SERVER,      /* edit the server address */
     MENU_SOURCE,      /* toggle where updates come from */
     MENU_UPDATE,      /* check for a newer build */
@@ -66,6 +67,10 @@ typedef struct {
     const char *server_addr;   /* shown in the address field on the title */
     bool        slow_mode;
     uint8_t     my_side;
+    /* Both players' names, shown under the scores. The opponent's comes from
+     * MATCH_START, so a browser player's chosen name appears on the console. */
+    const char *my_name;
+    const char *opp_name;
     uint32_t    frame;         /* for animation */
     /* Measured frames per second. On the HUD because "the ball is not smooth"
      * has two completely different causes -- the netcode or the frame rate --

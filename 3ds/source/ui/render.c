@@ -150,9 +150,13 @@ const PongRect PONG_MENU_RECT[MENU_COUNT] = {
     [MENU_QUICK]  = {  10.0f,  36.0f, 300.0f, 44.0f },
     [MENU_ROOM]   = {  10.0f,  84.0f, 300.0f, 44.0f },
     [MENU_BOT]    = {  10.0f, 132.0f, 300.0f, 44.0f },
-    [MENU_SERVER] = {  10.0f, 180.0f,  96.0f, 30.0f },
-    [MENU_SOURCE] = { 112.0f, 180.0f,  96.0f, 30.0f },
-    [MENU_UPDATE] = { 214.0f, 180.0f,  96.0f, 30.0f },
+    /* Four utility buttons across 300px: 72 wide with 4px gaps. Still over the
+     * 30px that a thumb needs, which is the constraint that decided the row
+     * height in the first place. */
+    [MENU_NAME]   = {  10.0f, 180.0f,  72.0f, 30.0f },
+    [MENU_SERVER] = {  86.0f, 180.0f,  72.0f, 30.0f },
+    [MENU_SOURCE] = { 162.0f, 180.0f,  72.0f, 30.0f },
+    [MENU_UPDATE] = { 238.0f, 180.0f,  72.0f, 30.0f },
 };
 
 bool pong_ui_hit(const PongRect *r, float x, float y)
@@ -186,6 +190,7 @@ static const MenuLabel MENU_LABEL[MENU_COUNT] = {
     [MENU_QUICK]  = { "QUICK MATCH", "play whoever is waiting" },
     [MENU_ROOM]   = { "JOIN ROOM",   "same code = same game" },
     [MENU_BOT]    = { "VS CPU",      "practice offline-ish" },
+    [MENU_NAME]   = { "NAME",        NULL },
     [MENU_SERVER] = { "SERVER",      NULL },
     [MENU_SOURCE] = { "SOURCE",      NULL },
     [MENU_UPDATE] = { "UPDATE",      NULL },
@@ -379,6 +384,26 @@ static void draw_playfield(const PongView *view, const PongHud *hud)
     dyn(sc, C2D_AlignCenter, 150.0f, 6.0f, 1.35f, CLR_SCORE);
     snprintf(sc, sizeof sc, "%u", view->score_r);
     dyn(sc, C2D_AlignCenter, 250.0f, 6.0f, 1.35f, CLR_SCORE);
+
+    /*
+     * Whose score is whose.
+     *
+     * Two numbers on a screen do not say which one is yours, and on a console
+     * you cannot see the other player to work it out. Each name sits under its
+     * own score, and yours is drawn in your paddle's colour so the link between
+     * "the blue paddle" and "me" needs no explanation.
+     */
+    {
+        bool left_is_mine = (hud->my_side == 0);
+        const char *ln = left_is_mine ? hud->my_name : hud->opp_name;
+        const char *rn = left_is_mine ? hud->opp_name : hud->my_name;
+        u32 lc = left_is_mine ? CLR_MINE : CLR_THEIRS;
+        u32 rc = left_is_mine ? CLR_THEIRS : CLR_MINE;
+        /* Dimmed toward the background: this is furniture, and a bright name
+         * beside a moving ball competes with the ball. */
+        if (ln && ln[0]) dyn(ln, C2D_AlignCenter, 150.0f, 48.0f, 0.46f, mix(lc, CLR_BG, 0.55f));
+        if (rn && rn[0]) dyn(rn, C2D_AlignCenter, 250.0f, 48.0f, 0.46f, mix(rc, CLR_BG, 0.55f));
+    }
 
     const float pw = (float)PONG_PADDLE_W / 2.0f;
     const float ph = (float)PONG_PADDLE_H / 2.0f;

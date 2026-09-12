@@ -120,6 +120,36 @@ static bool ask_room_code(App *a)
 }
 
 /** Opens the software keyboard and applies whatever the user typed. */
+/*
+ * Asks for the name the other player sees.
+ *
+ * Stored in the same config as everything else, so it is typed once. Sent in
+ * HELLO, which the server already relays to the opponent in MATCH_START -- the
+ * plumbing was there from the start, with nothing on the console to fill it in.
+ */
+static void edit_player_name(App *a)
+{
+    char buf[sizeof a->cfg.player_name];
+    snprintf(buf, sizeof buf, "%s", a->cfg.player_name);
+
+    SwkbdState kb;
+    /* NORMAL rather than QWERTY, for the same reason as the address box: the
+     * QWERTY layout greys out its symbol page, and a name is exactly the sort
+     * of thing someone will want a symbol in. */
+    swkbdInit(&kb, SWKBD_TYPE_NORMAL, 2, (int)sizeof buf - 1);
+    swkbdSetInitialText(&kb, buf);
+    swkbdSetHintText(&kb, "shown to the other player");
+    swkbdSetButton(&kb, SWKBD_BUTTON_LEFT, "Cancel", false);
+    swkbdSetButton(&kb, SWKBD_BUTTON_RIGHT, "Save", true);
+    swkbdSetValidation(&kb, SWKBD_NOTEMPTY_NOTBLANK, 0, 0);
+
+    if (swkbdInputText(&kb, buf, sizeof buf) != SWKBD_BUTTON_RIGHT) return;
+
+    snprintf(a->cfg.player_name, sizeof a->cfg.player_name, "%s", buf);
+    pong_config_save(&a->cfg);
+    snprintf(a->message, sizeof a->message, "you are '%s'", a->cfg.player_name);
+}
+
 static void edit_server_address(App *a)
 {
     char buf[PONG_ADDR_MAX];
@@ -566,6 +596,7 @@ int main(void)
                 case MENU_ROOM:
                     if (ask_room_code(&app)) begin_connect(&app, PONG_JOIN_MODE_ROOM_CODE);
                     break;
+                case MENU_NAME:   edit_player_name(&app); break;
                 case MENU_SERVER: edit_server_address(&app); break;
                 case MENU_SOURCE: {
                     /* Cycle the presets. A hand-edited config that matches none
@@ -643,6 +674,10 @@ int main(void)
                                                   app.cfg.gh_owner, app.cfg.gh_repo,
                                                   src_label, sizeof src_label);
         hud.my_side = app.client.my_side;
+        hud.my_name = app.cfg.player_name;
+        /* Empty until MATCH_START arrives, which is correct -- there is no
+         * opponent to name while we are still queueing. */
+        hud.opp_name = app.client.opp_name;
         hud.slow_mode = app.client.slow_mode;
         hud.message = app.message;
         hud.diag = app.net ? pong_net_diag(app.net) : NULL;
