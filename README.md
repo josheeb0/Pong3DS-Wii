@@ -157,6 +157,6 @@ See `deploy/DEPLOY.md`. Short version: pull the image, publish 8788 (HTTP) and
 
 ## Not built
 
-A Wii client. The protocol reserves `platform = 2` for it, and the codec and
+A Wii client. The protocol reserves `platform = 3` for it, and the codec and
 netcode are already platform-free C, so it needs a renderer and a socket layer
 rather than any protocol change.
