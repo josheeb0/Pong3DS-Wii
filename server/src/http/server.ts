@@ -107,6 +107,8 @@ export class HttpLayer {
     res.end(JSON.stringify({
       ok: true,
       protocol: PROTOCOL_VERSION,
+      build: config.buildId,
+      sha: config.gitSha,
       uptimeMs: Date.now() - this.deps.serverStartMs,
     }));
   }
@@ -122,6 +124,7 @@ export class HttpLayer {
   private version(res: ServerResponse): void {
     const body =
       `build=${config.buildId}\n` +
+      `sha=${config.gitSha}\n` +
       `protocol=${PROTOCOL_VERSION}\n` +
       `dsx=/downloads/pong3ds.3dsx\n` +
       `cia=/downloads/pong3ds.cia\n`;

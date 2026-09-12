@@ -12,9 +12,47 @@ published on the host so the 3DS can reach `192.168.4.29:8787` directly.
 
 ---
 
-## Current deployment (what is running now)
+## Deploying from GHCR (preferred)
 
-Built and run directly with Docker on `rdesktop.local`, joined to
+CI publishes `ghcr.io/johndoe6345789/pong3ds` on every push to `main`. The host
+pulls a tested image rather than building from synced source, which means the
+thing running in production is the exact artifact CI verified.
+
+The package is public (like the other `ghcr.io/johndoe6345789/*` images this
+host already pulls), so no `docker login` is needed on the host.
+
+```bash
+ssh r@rdesktop.local '
+  docker pull ghcr.io/johndoe6345789/pong3ds:latest
+  docker rm -f pong-server 2>/dev/null || true
+  docker run -d --name pong-server --restart unless-stopped \
+    --network captain-overlay-network \
+    -p 8788:8788 -p 8787:8787 \
+    -v $HOME/pong3ds-downloads:/app/public/downloads:ro \
+    -e PUBLIC_ORIGIN=https://pong.wardcrew.com \
+    --memory 512m --cpus 1.0 \
+    ghcr.io/johndoe6345789/pong3ds:latest
+'
+```
+
+Confirm which build is actually live — this is how you catch a deploy that
+silently did not take:
+
+```bash
+curl -s http://192.168.4.29:8788/healthz
+# {"ok":true,"protocol":1,"build":42,"sha":"abc123...","uptimeMs":...}
+```
+
+`build` is the CI run number and `sha` the commit, both baked in at image build
+time. If they do not match the run you expected, the pull did not happen.
+
+Pin a specific build instead of `latest` by using its tag:
+`ghcr.io/johndoe6345789/pong3ds:sha-abc1234`.
+
+## Building on the host (fallback)
+
+Useful when iterating faster than CI, or when GitHub is unreachable. Built and
+run directly with Docker on `rdesktop.local`, joined to
 `captain-overlay-network` so cloudflared can reach it by container name:
 
 ```bash

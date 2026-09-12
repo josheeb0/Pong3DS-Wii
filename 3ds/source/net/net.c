@@ -29,6 +29,12 @@ struct PongNet {
     char err[128];
     char session[80];
 
+    /* Kept separately so the fallback cannot erase why the primary failed. */
+    char lan_err[128];
+    bool lan_attempted;
+    char local_ip[24];
+    char diag[512];
+
     uint32_t rtt_ms;
     uint32_t hz;
 
@@ -53,12 +59,13 @@ struct PongNet {
 
 /* -------------------------------------------------------------- LAN helpers */
 
-static bool on_lan(const char *subnet)
+static bool on_lan(const char *subnet, char *ip_out, size_t ip_cap)
 {
-    if (!subnet || !subnet[0]) return true;
     struct in_addr me;
     me.s_addr = (in_addr_t)gethostid();
     const char *s = inet_ntoa(me);
+    snprintf(ip_out, ip_cap, "%s", s ? s : "0.0.0.0");
+    if (!subnet || !subnet[0]) return true;
     return s && strncmp(s, subnet, strlen(subnet)) == 0;
 }
 
@@ -237,12 +244,18 @@ PongNet *pong_net_open(const PongNetConfig *cfg)
     /* LAN first, but only when we are plausibly on it. Attempting a LAN
      * connect from a phone hotspot would stall for the full timeout on every
      * launch for no possible benefit. */
+    bool same_subnet = on_lan(cfg->lan_subnet, n->local_ip, sizeof n->local_ip);
     bool try_lan = (cfg->mode == PONG_MODE_LAN) ||
-                   (cfg->mode == PONG_MODE_AUTO && on_lan(cfg->lan_subnet));
+                   (cfg->mode == PONG_MODE_AUTO && same_subnet);
 
     if (try_lan) {
-        n->sock = lan_connect(cfg->lan_host, cfg->lan_port, 800, n->err, sizeof n->err);
+        n->lan_attempted = true;
+        /* 3DS wifi is slow, especially on the first connect after association.
+         * 800ms was a laptop's idea of generous and timed out on real hardware. */
+        n->sock = lan_connect(cfg->lan_host, cfg->lan_port, 3000,
+                              n->lan_err, sizeof n->lan_err);
         if (n->sock >= 0) {
+            n->lan_err[0] = '\0';
             n->active = PONG_MODE_LAN;
             n->state = PONG_LINK_OPEN;
             n->hz = PONG_SNAPSHOT_HZ;
@@ -251,7 +264,13 @@ PongNet *pong_net_open(const PongNetConfig *cfg)
         }
     }
 
+    if (!try_lan) {
+        snprintf(n->lan_err, sizeof n->lan_err,
+                 "skipped: %s is not on %s", n->local_ip, cfg->lan_subnet);
+    }
+
     if (cfg->mode == PONG_MODE_LAN) {
+        snprintf(n->err, sizeof n->err, "%s", n->lan_err);
         n->state = PONG_LINK_FAILED;
         return n;
     }
@@ -299,6 +318,23 @@ void pong_net_close(PongNet *n)
 PongLinkState pong_net_state(const PongNet *n) { return n ? n->state : PONG_LINK_IDLE; }
 const char *pong_net_describe(const PongNet *n) { return n ? n->desc : ""; }
 const char *pong_net_error(const PongNet *n) { return n ? n->err : ""; }
+const char *pong_net_local_ip(const PongNet *n) { return n ? n->local_ip : "?"; }
+
+const char *pong_net_diag(const PongNet *n)
+{
+    if (!n) return "";
+    PongNet *m = (PongNet *)n;   /* diag is a formatting cache, not state */
+    snprintf(m->diag, sizeof m->diag,
+             "3DS %s\nLAN %s:%u -> %s\nWEB %s -> %s",
+             n->local_ip,
+             n->cfg.lan_host, (unsigned)n->cfg.lan_port,
+             n->lan_err[0] ? n->lan_err : (n->active == PONG_MODE_LAN ? "connected" : "not tried"),
+             n->cfg.web_host,
+             n->active == PONG_MODE_WEB
+                 ? (n->err[0] ? n->err : "connecting")
+                 : "not tried");
+    return m->diag;
+}
 uint32_t pong_net_rtt(const PongNet *n) { return n ? n->rtt_ms : 0; }
 uint32_t pong_net_hz(const PongNet *n) { return n ? n->hz : 0; }
 const char *pong_net_session(const PongNet *n) { return n ? n->session : ""; }

@@ -31,6 +31,8 @@ export const config = {
    * must still be able to tell "newer" from "older".
    */
   buildId: num('BUILD_ID', 1),
+  /** Commit the image was built from; 'local' for a workstation build. */
+  gitSha: str('GIT_SHA', 'local'),
 } as const;
 
 export const TICK_MS = 1000 / config.tickHz;

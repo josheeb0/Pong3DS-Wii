@@ -38,10 +38,18 @@ RUN cd server && npm run build && npm prune --omit=dev
 FROM node:22-alpine AS runtime
 WORKDIR /app
 
+# Monotonic build number, surfaced at /api/version and compared by the 3DS
+# auto-updater. CI passes the workflow run number; a local build gets 0, which
+# no published build will ever equal.
+ARG BUILD_ID=0
+ARG GIT_SHA=local
+
 ENV NODE_ENV=production \
     HTTP_PORT=8788 \
     TCP_PORT=8787 \
-    STATIC_DIR=/app/public
+    STATIC_DIR=/app/public \
+    BUILD_ID=${BUILD_ID} \
+    GIT_SHA=${GIT_SHA}
 
 COPY --from=serverbuild /app/server/dist         ./dist
 COPY --from=serverbuild /app/server/node_modules ./node_modules

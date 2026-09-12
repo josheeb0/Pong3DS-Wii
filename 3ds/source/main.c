@@ -335,6 +335,7 @@ int main(void)
             pump_network(&app, now);
 
             if (pong_net_state(app.net) == PONG_LINK_FAILED && app.screen != SCREEN_ERROR) {
+                /* The detail lives in pong_net_diag(); this is just the headline. */
                 snprintf(app.message, sizeof app.message, "%s", pong_net_error(app.net));
                 app.screen = SCREEN_ERROR;
             }
@@ -356,6 +357,7 @@ int main(void)
         hud.my_side = app.client.my_side;
         hud.slow_mode = app.client.slow_mode;
         hud.message = app.message;
+        hud.diag = app.net ? pong_net_diag(app.net) : NULL;
 
         if (app.net) {
             snprintf(app.status, sizeof app.status, "%s", pong_net_describe(app.net));

@@ -137,10 +137,23 @@ verified without hardware in the loop. `3ds/source/game/client.c` and
 `pong_proto.c` deliberately have **no libctru dependency** so they compile
 natively — which is also what keeps a future Wii client viable.
 
-## Deploying
+## CI and deploying
 
-See `deploy/DEPLOY.md`. Short version: one container, built on the host,
-published on 8788 (HTTP) and 8787 (TCP).
+`.github/workflows/ci.yml` runs on every push and PR:
+
+- protocol codegen has not drifted from `shared/protocol.json`
+- server typecheck and simulation tests
+- **the C codec test** — plain C99 with no libctru dependency, so CI can prove
+  the console's wire format still matches the TypeScript encoder without a
+  devkitARM toolchain
+- web typecheck, build, and a gzipped bundle-size ceiling
+
+On `main` it publishes `ghcr.io/johndoe6345789/pong3ds`, with the CI run number
+and commit baked in and reported at `/healthz` — so you can always tell which
+build is actually live.
+
+See `deploy/DEPLOY.md`. Short version: pull the image, publish 8788 (HTTP) and
+8787 (raw TCP for the 3DS).
 
 ## Not built
 

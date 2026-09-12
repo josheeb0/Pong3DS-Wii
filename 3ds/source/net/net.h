@@ -66,6 +66,19 @@ const char *pong_net_describe(const PongNet *n);
 /** Last error, for the bottom screen when a connection fails. */
 const char *pong_net_error(const PongNet *n);
 
+/**
+ * Multi-line diagnostic: the console's own IP, whether the LAN was attempted,
+ * and the failure reason from EACH path.
+ *
+ * Exists because a fallback that overwrites the primary path's error destroys
+ * the one fact needed to debug it -- which is exactly what happened the first
+ * time this ran on real hardware.
+ */
+const char *pong_net_diag(const PongNet *n);
+
+/** The console's own address, as detected for the subnet check. */
+const char *pong_net_local_ip(const PongNet *n);
+
 /** Observed round-trip in ms, 0 if unknown. */
 uint32_t pong_net_rtt(const PongNet *n);
 

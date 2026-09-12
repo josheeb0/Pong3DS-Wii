@@ -139,8 +139,15 @@ static void draw_top(const PongView *view, const PongHud *hud)
         break;
 
     case SCREEN_ERROR:
-        dyn("CONNECTION FAILED", C2D_AlignCenter, 200.0f, 90.0f, 0.8f, CLR_WARN);
-        dyn(hud->message ? hud->message : "", C2D_AlignCenter, 200.0f, 125.0f, 0.45f, CLR_DIM);
+        dyn("CONNECTION FAILED", C2D_AlignCenter, 200.0f, 30.0f, 0.8f, CLR_WARN);
+        /* Every path's result, so the failure is diagnosable from the screen
+         * rather than by guessing. A fallback's error alone is not enough. */
+        if (hud->diag && hud->diag[0]) {
+            dyn(hud->diag, 0, 14.0f, 75.0f, 0.45f, CLR_DIM);
+        } else if (hud->message) {
+            dyn(hud->message, C2D_AlignCenter, 200.0f, 100.0f, 0.45f, CLR_DIM);
+        }
+        dyn("A / TAP = back", C2D_AlignCenter, 200.0f, 210.0f, 0.42f, CLR_DIM);
         break;
 
     case SCREEN_PLAY:

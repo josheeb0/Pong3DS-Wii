@@ -29,6 +29,7 @@ typedef struct {
     const char *status_line;   /* transport description */
     const char *detail_line;   /* rtt / hz / opponent */
     const char *message;       /* errors, prompts */
+    const char *diag;          /* multi-line per-transport diagnostic */
     uint32_t    rtt_ms;
     uint32_t    hz;
     bool        touch_hint;    /* pulse the "tap to continue" box */
