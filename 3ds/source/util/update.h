@@ -16,6 +16,10 @@
 /** Where a .3dsx launched from the Homebrew Launcher normally lives. */
 #define PONG_DSX_PATH "sdmc:/3ds/pong3ds.3dsx"
 
+/** Where the downloaded .cia is left for FBI to install. SD root, because that
+ *  is the first place FBI opens and this should not be a scavenger hunt. */
+#define PONG_CIA_PATH "sdmc:/pong3ds.cia"
+
 /**
  * Build number, stamped by CI via -DPONG_BUILD_ID.
  *
@@ -94,6 +98,9 @@ typedef struct {
     /* Absolute URL when the source is GitHub; empty for the server source,
      * where dsx_path is relative to the game server. */
     char     dsx_url[320];
+    /* Same, for the .cia asset. An installed title cannot replace itself, so
+     * the best it can do is put the right file where FBI will find it. */
+    char     cia_url[320];
     char     message[160];
 } PongUpdateInfo;
 
@@ -111,8 +118,21 @@ PongUpdateResult pong_update_check(const PongNetConfig *net, uint32_t local_buil
                                    const char *gh_owner, const char *gh_repo,
                                    PongUpdateInfo *out);
 
+/**
+ * Which artifact to fetch.
+ *
+ * Not a cosmetic choice: a .3dsx is useless to someone running the installed
+ * title, and a .cia is useless to someone running from the Homebrew Launcher.
+ * The caller decides from envIsHomebrew() rather than guessing.
+ */
+typedef enum {
+    PONG_ASSET_3DSX = 0,
+    PONG_ASSET_CIA,
+} PongUpdateAsset;
+
 PongUpdateResult pong_update_download(const PongNetConfig *net,
                                       const PongUpdateInfo *info,
+                                      PongUpdateAsset which,
                                       const char *dest_path,
                                       char *message, size_t message_cap);
 

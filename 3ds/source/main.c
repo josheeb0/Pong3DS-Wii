@@ -171,19 +171,33 @@ static void do_update_check(App *a)
         return;
     }
 
-    PongUpdateResult d = pong_update_download(&a->cfg.net, &up, PONG_DSX_PATH,
-                                              a->message, sizeof a->message);
+    /*
+     * Fetch the artifact that matches how we are actually running.
+     *
+     * This used to always fetch the .3dsx and then report "3dsx updated to N",
+     * which is true and useless when the thing you are looking at is the
+     * installed title: the file on the SD card changed, the running title did
+     * not, and relaunching showed the old build. A correct update read as a
+     * broken one. envIsHomebrew() is false for an installed title, so we can
+     * simply ask instead of guessing.
+     */
+    const bool hb = envIsHomebrew();
+    pong_log("running as     : %s", hb ? ".3dsx (Homebrew Launcher)" : "installed title (.cia)");
+
+    PongUpdateResult d = pong_update_download(
+        &a->cfg.net, &up,
+        hb ? PONG_ASSET_3DSX : PONG_ASSET_CIA,
+        hb ? PONG_DSX_PATH   : PONG_CIA_PATH,
+        a->message, sizeof a->message);
     pong_log("download       : %s", a->message);
 
     /*
-     * The .3dsx on the SD card is now current. An installed .cia is NOT: a
-     * title cannot install another title without am:u, which belongs to FBI.
-     * Say where to get it rather than implying the running build was replaced.
+     * A title cannot install another title without am:u, which belongs to FBI,
+     * so the .cia is downloaded and left where FBI will find it. Nothing here
+     * claims the running build was replaced, because it was not.
      */
-    if (d == PONG_UPDATE_DONE && up.release_url[0]) {
-        snprintf(a->message, sizeof a->message,
-                 "3dsx updated to %lu. CIA: %s",
-                 (unsigned long)up.remote_build, up.release_url);
+    if (d == PONG_UPDATE_DONE && !hb && up.release_url[0]) {
+        pong_log("release page   : %s", up.release_url);
     }
 }
 

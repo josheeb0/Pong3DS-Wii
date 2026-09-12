@@ -79,6 +79,9 @@ static PongUpdateResult check_github(const PongNetConfig *net, uint32_t local_bu
     snprintf(out->dsx_url, sizeof out->dsx_url,
              "https://github.com/%s/%s/releases/download/%s/pong3ds.3dsx",
              owner, repo, tag);
+    snprintf(out->cia_url, sizeof out->cia_url,
+             "https://github.com/%s/%s/releases/download/%s/pong3ds.cia",
+             owner, repo, tag);
 
     if (out->remote_build > local_build) {
         snprintf(out->message, sizeof out->message, "%s available (running %lu)",
@@ -178,11 +181,19 @@ PongUpdateResult pong_update_check(const PongNetConfig *net, uint32_t local_buil
 
 PongUpdateResult pong_update_download(const PongNetConfig *net,
                                       const PongUpdateInfo *info,
+                                      PongUpdateAsset which,
                                       const char *dest_path,
                                       char *message, size_t message_cap)
 {
-    if (!info->dsx_url[0] && !info->dsx_path[0]) {
-        snprintf(message, message_cap, "no download was advertised");
+    const bool cia = (which == PONG_ASSET_CIA);
+    const char *url  = cia ? info->cia_url  : info->dsx_url;
+    const char *path = cia ? info->cia_path : info->dsx_path;
+
+    if (!url[0] && !path[0]) {
+        /* Name the artifact: "no download was advertised" gave no clue that
+         * the .3dsx was there and only the .cia was missing. */
+        snprintf(message, message_cap, "no %s was advertised for this build",
+                 cia ? ".cia" : ".3dsx");
         return PONG_UPDATE_ERROR;
     }
 
@@ -195,9 +206,9 @@ PongUpdateResult pong_update_download(const PongNetConfig *net,
     HttpsResponse resp;
     HttpsResult rc;
 
-    if (info->dsx_url[0]) {
+    if (url[0]) {
         /* GitHub: an absolute URL that redirects once to a signed asset host. */
-        rc = https_get_url(info->dsx_url, NULL, buf, DOWNLOAD_MAX,
+        rc = https_get_url(url, NULL, buf, DOWNLOAD_MAX,
                            net->web_verify, 3, &resp);
     } else {
         HttpsConn *c = https_open(net->web_host, net->web_port,
@@ -207,7 +218,7 @@ PongUpdateResult pong_update_download(const PongNetConfig *net,
             snprintf(message, message_cap, "cannot reach %s", net->web_host);
             return PONG_UPDATE_ERROR;
         }
-        rc = https_request(c, "GET", info->dsx_path, NULL, NULL, 0,
+        rc = https_request(c, "GET", path, NULL, NULL, 0,
                            buf, DOWNLOAD_MAX, &resp);
         https_close(c);
     }
@@ -249,7 +260,17 @@ PongUpdateResult pong_update_download(const PongNetConfig *net,
         return PONG_UPDATE_ERROR;
     }
 
-    snprintf(message, message_cap, "updated to build %lu -- relaunch to apply",
-             (unsigned long)info->remote_build);
+    if (cia) {
+        /* Deliberately does NOT say "updated": nothing about the running title
+         * changed, and saying otherwise is what made a successful download look
+         * like a failed one. */
+        snprintf(message, message_cap,
+                 "build %lu saved to SD as pong3ds.cia - install it with FBI",
+                 (unsigned long)info->remote_build);
+    } else {
+        snprintf(message, message_cap,
+                 "updated to build %lu -- relaunch to apply",
+                 (unsigned long)info->remote_build);
+    }
     return PONG_UPDATE_DONE;
 }
