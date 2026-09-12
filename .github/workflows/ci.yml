@@ -182,3 +182,126 @@ jobs:
             printf 'docker pull %s:latest\n' "$IMAGE"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Build the 3DS client and publish it to Releases.
+  #
+  # Installs devkitPro as a step rather than using the devkitpro/devkitarm
+  # container: that image is Debian bookworm (glibc 2.36) and makerom is built
+  # against 2.38, so packaging a .cia inside it fails at the last step. The
+  # runner has glibc 2.39, so everything works in one place.
+  # ---------------------------------------------------------------------------
+  cia:
+    name: Build 3DS (.3dsx + .cia)
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write      # required to create releases
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install devkitPro (devkitARM + libctru + citro2d)
+        run: |
+          set -euo pipefail
+          wget -qO /tmp/install-devkitpro-pacman https://apt.devkitpro.org/install-devkitpro-pacman
+          chmod +x /tmp/install-devkitpro-pacman
+          sudo /tmp/install-devkitpro-pacman
+          sudo dkp-pacman -S --noconfirm --needed 3ds-dev
+          echo "DEVKITPRO=/opt/devkitpro"          >> "$GITHUB_ENV"
+          echo "DEVKITARM=/opt/devkitpro/devkitARM" >> "$GITHUB_ENV"
+          echo "/opt/devkitpro/tools/bin"          >> "$GITHUB_PATH"
+
+      # mbedTLS is the slow part (a few minutes) and changes only when its
+      # version or our cipher config does, so key the cache on exactly those.
+      - name: Cache mbedTLS build
+        id: mbedtls-cache
+        uses: actions/cache@v4
+        with:
+          path: 3ds/vendor/mbedtls
+          key: mbedtls-${{ runner.os }}-${{ hashFiles('3ds/vendor/build-mbedtls.sh', '3ds/vendor/mbedtls_config_3ds.h') }}
+
+      - name: Build mbedTLS for ARM11
+        if: steps.mbedtls-cache.outputs.cache-hit != 'true'
+        run: ./3ds/vendor/build-mbedtls.sh
+
+      - name: Fetch CIA packaging tools
+        run: ./3ds/vendor/fetch-tools.sh
+
+      - name: Build .3dsx
+        run: make -C 3ds
+
+      - name: Build .cia
+        run: ./3ds/build-cia.sh 3ds/pong3ds.elf 3ds/pong3ds.cia
+
+      - name: Report sizes
+        run: |
+          {
+            echo "### 3DS build"
+            echo ""
+            echo "| artifact | size |"
+            echo "|---|---:|"
+            for f in 3ds/pong3ds.3dsx 3ds/pong3ds.cia; do
+              printf '| %s | %s |\n' "$(basename "$f")" "$(du -h "$f" | cut -f1)"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Available on every run, including PRs, so a branch build can be tested
+      # on hardware without waiting for a release.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pong3ds-build-${{ github.run_number }}
+          path: |
+            3ds/pong3ds.3dsx
+            3ds/pong3ds.cia
+          retention-days: 30
+
+      - name: Publish release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_NUM: ${{ github.run_number }}
+          SHA: ${{ github.sha }}
+          REF_NAME: ${{ github.ref_name }}
+          IS_TAG: ${{ startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          set -euo pipefail
+
+          if [ "$IS_TAG" = "true" ]; then
+            TAG="$REF_NAME"
+            TITLE="Pong3DS $REF_NAME"
+            PRERELEASE=""
+          else
+            TAG="build-$BUILD_NUM"
+            TITLE="Build $BUILD_NUM"
+            PRERELEASE="--prerelease"
+          fi
+
+          # Notes are written to a file rather than passed inline, so nothing
+          # from the commit can be interpreted as shell.
+          {
+            printf '3DS client, build %s (`%s`).\n\n' "$BUILD_NUM" "${SHA:0:7}"
+            printf '| file | install |\n|---|---|\n'
+            printf '| `pong3ds.cia` | Install with FBI. Own HOME-menu title, 64MB mode. |\n'
+            printf '| `pong3ds.3dsx` | Copy to `sd:/3ds/`, launch from the Homebrew Launcher. |\n\n'
+            printf 'Tap the server field on the title screen to enter an address:\n\n'
+            printf -- '- `pong.wardcrew.com` - HTTPS on 443 (works anywhere)\n'
+            printf -- '- `192.168.4.29:8788` - plain HTTP on a LAN\n'
+            printf -- '- `tcp://192.168.4.29:8787` - raw TCP fast path, 60Hz\n\n'
+            printf 'Press X on the title screen to check for a newer build.\n'
+          } > /tmp/notes.md
+
+          # Re-running a workflow reuses the run number, so replace rather than
+          # fail on an existing release.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release delete "$TAG" --yes --cleanup-tag || true
+          fi
+
+          gh release create "$TAG" \
+            --title "$TITLE" \
+            --notes-file /tmp/notes.md \
+            $PRERELEASE \
+            3ds/pong3ds.cia \
+            3ds/pong3ds.3dsx
+
+          printf '### Released\n\n[%s](%s)\n' "$TAG" \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/tag/$TAG" >> "$GITHUB_STEP_SUMMARY"

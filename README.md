@@ -148,9 +148,20 @@ natively — which is also what keeps a future Wii client viable.
   devkitARM toolchain
 - web typecheck, build, and a gzipped bundle-size ceiling
 
-On `main` it publishes `ghcr.io/johndoe6345789/pong3ds`, with the CI run number
-and commit baked in and reported at `/healthz` — so you can always tell which
-build is actually live.
+On `main` it also:
+
+- publishes `ghcr.io/johndoe6345789/pong3ds`, with the CI run number and commit
+  baked in and reported at `/healthz`, so you can always tell which build is
+  actually live
+- **builds the 3DS client and publishes `.cia` + `.3dsx` to Releases**, one
+  release per commit (`build-N`, marked pre-release). Version tags (`v*`) get a
+  proper release instead.
+
+The 3DS job installs devkitPro as a step rather than using the
+`devkitpro/devkitarm` container: that image is Debian bookworm (glibc 2.36) and
+`makerom` is built against 2.38, so packaging a `.cia` inside it fails at the
+last step. The runner has 2.39, so everything works in one place. mbedTLS is
+cached on its version and cipher config, since it is the slow part.
 
 See `deploy/DEPLOY.md`. Short version: pull the image, publish 8788 (HTTP) and
 8787 (raw TCP for the 3DS).
