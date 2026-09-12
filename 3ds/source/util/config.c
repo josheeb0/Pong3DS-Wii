@@ -30,6 +30,12 @@ static void apply(PongConfig *cfg, const char *key, const char *val)
     else if (!strcmp(key, "web_path"))   snprintf(cfg->net.web_path, sizeof cfg->net.web_path, "%s", val);
     else if (!strcmp(key, "name"))       snprintf(cfg->player_name, sizeof cfg->player_name, "%s", val);
     else if (!strcmp(key, "autoupdate")) cfg->autoupdate = atoi(val) != 0;
+    else if (!strcmp(key, "gh_owner"))   snprintf(cfg->gh_owner, sizeof cfg->gh_owner, "%s", val);
+    else if (!strcmp(key, "gh_repo"))    snprintf(cfg->gh_repo, sizeof cfg->gh_repo, "%s", val);
+    else if (!strcmp(key, "update_source")) {
+        cfg->update_source = strcmp(val, "github") == 0
+            ? PONG_UPDATE_SRC_GITHUB : PONG_UPDATE_SRC_SERVER;
+    }
     else if (!strcmp(key, "mode")) {
         if      (!strcmp(val, "lan")) cfg->net.mode = PONG_MODE_LAN;
         else if (!strcmp(val, "web")) cfg->net.mode = PONG_MODE_WEB;
@@ -81,6 +87,12 @@ void pong_config_load(PongConfig *cfg)
     cfg->net.mode = PONG_MODE_AUTO;
     snprintf(cfg->player_name, sizeof cfg->player_name, "3DS PLAYER");
     cfg->autoupdate = true;
+    /* Defaults to the upstream repository's releases: independent of whether
+     * any particular server has been redeployed, which is the gap the server
+     * source cannot see. Cycle the SOURCE row to pick a different one. */
+    cfg->update_source = PONG_UPDATE_SRC_GITHUB;
+    snprintf(cfg->gh_owner, sizeof cfg->gh_owner, "%s", PONG_GH_OWNER);
+    snprintf(cfg->gh_repo, sizeof cfg->gh_repo, "%s", PONG_GH_REPO);
 
     parse_file(cfg, "romfs:/config.txt");
     parse_file(cfg, PONG_SD_CONFIG);   /* SD wins */
@@ -108,6 +120,10 @@ void pong_config_remember_mode(const PongConfig *cfg, PongNetMode mode)
     fprintf(f, "web_path=%s\n", cfg->net.web_path);
     fprintf(f, "name=%s\n", cfg->player_name);
     fprintf(f, "autoupdate=%d\n", cfg->autoupdate ? 1 : 0);
+    fprintf(f, "update_source=%s\n",
+            cfg->update_source == PONG_UPDATE_SRC_GITHUB ? "github" : "server");
+    fprintf(f, "gh_owner=%s\n", cfg->gh_owner);
+    fprintf(f, "gh_repo=%s\n", cfg->gh_repo);
     fprintf(f, "mode=%s\n", mode == PONG_MODE_LAN ? "lan"
                           : mode == PONG_MODE_WEB ? "web" : "auto");
     fclose(f);

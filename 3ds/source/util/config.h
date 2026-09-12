@@ -12,6 +12,7 @@
 
 #include <stdbool.h>
 #include "net.h"
+#include "update.h"
 
 #define PONG_SD_CONFIG "sdmc:/3ds/pong3ds.cfg"
 
@@ -19,6 +20,10 @@ typedef struct {
     PongNetConfig net;
     char          player_name[17];
     bool          autoupdate;
+    /* Where UPDATE looks: the game server, or GitHub Releases. */
+    PongUpdateSource update_source;
+    char          gh_owner[48];
+    char          gh_repo[64];
 } PongConfig;
 
 /** Loads defaults from romfs, then applies any SD-card overrides. */

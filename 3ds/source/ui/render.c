@@ -116,8 +116,9 @@ const PongRect PONG_MENU_RECT[MENU_COUNT] = {
     [MENU_QUICK]  = {  12.0f,  46.0f, 296.0f, 40.0f },
     [MENU_ROOM]   = {  12.0f,  92.0f, 296.0f, 40.0f },
     [MENU_BOT]    = {  12.0f, 138.0f, 296.0f, 40.0f },
-    [MENU_SERVER] = {  12.0f, 186.0f, 180.0f, 30.0f },
-    [MENU_UPDATE] = { 198.0f, 186.0f, 110.0f, 30.0f },
+    [MENU_SERVER] = {  12.0f, 184.0f,  96.0f, 28.0f },
+    [MENU_SOURCE] = { 114.0f, 184.0f, 100.0f, 28.0f },
+    [MENU_UPDATE] = { 220.0f, 184.0f,  88.0f, 28.0f },
 };
 
 bool pong_ui_hit(const PongRect *r, float x, float y)
@@ -152,6 +153,7 @@ static const MenuLabel MENU_LABEL[MENU_COUNT] = {
     [MENU_ROOM]   = { "JOIN ROOM",   "same code = same game" },
     [MENU_BOT]    = { "VS CPU",      "practice offline-ish" },
     [MENU_SERVER] = { "SERVER",      NULL },
+    [MENU_SOURCE] = { "SOURCE",      NULL },
     [MENU_UPDATE] = { "UPDATE",      NULL },
 };
 
@@ -246,11 +248,16 @@ static void draw_menu(const PongHud *hud)
                       PONG_MENU_RECT[hud->menu_sel].h, CLR_ACCENT);
 
     if (hud->server_addr && hud->server_addr[0]) {
-        dyn_wrap(hud->server_addr, 0, 20.0f, 196.0f, 0.32f, CLR_DIM, 164.0f);
+        dyn_wrap(hud->server_addr, 0, 14.0f, 214.0f, 0.3f, CLR_DIM, 190.0f);
+    }
+    if (hud->update_src && hud->update_src[0]) {
+        char us[72];
+        snprintf(us, sizeof us, "updates: %s", hud->update_src);
+        dyn(us, C2D_AlignRight, 308.0f, 214.0f, 0.3f, CLR_DIM);
     }
 
     if (hud->message && hud->message[0]) {
-        dyn_wrap(hud->message, 0, 10.0f, 222.0f, 0.33f, CLR_WARN, 300.0f);
+        dyn_wrap(hud->message, 0, 10.0f, 226.0f, 0.3f, CLR_WARN, 300.0f);
     } else {
         char v[64];
         if (hud->build_id == 0) {
@@ -260,7 +267,7 @@ static void draw_menu(const PongHud *hud)
             snprintf(v, sizeof v, "build %lu  ·  protocol v%d  ·  D-PAD + A or tap",
                      (unsigned long)hud->build_id, PONG_PROTOCOL_VERSION);
         }
-        dyn(v, C2D_AlignCenter, 160.0f, 224.0f, 0.31f, mix(CLR_DIM, CLR_BG, 0.25f));
+        dyn(v, C2D_AlignCenter, 160.0f, 228.0f, 0.29f, mix(CLR_DIM, CLR_BG, 0.25f));
     }
 }
 

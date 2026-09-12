@@ -537,7 +537,9 @@ HttpsResult https_request(HttpsConn *c,
     pong_log("  HTTP  %s %s (body %u bytes)", method, path, (unsigned)body_len);
 
     /* ---- request ------------------------------------------------------- */
-    char head[512];
+    /* Sized for a signed redirect target, not for a tidy path: GitHub's release
+     * asset URLs carry a JWT and a SAS token and run to ~1100 characters. */
+    static char head[HTTPS_MAX_URL + 512];
     int hn = snprintf(head, sizeof head,
         "%s %s HTTP/1.1\r\n"
         "Host: %s\r\n"
@@ -614,6 +616,16 @@ HttpsResult https_request(HttpsConn *c,
                 if (strstr(hdr_value(line), "close")) close_after = true;
             } else if (hdr_is(line, "x-pong-session")) {
                 snprintf(resp->session, sizeof resp->session, "%s", hdr_value(line));
+            } else if (hdr_is(line, "location")) {
+                const char *v = hdr_value(line);
+                if (strlen(v) >= sizeof resp->location) {
+                    /* Refuse rather than follow a truncated URL, which would
+                     * request something other than what the server named. */
+                    pong_log("  HTTP  redirect target too long (%u bytes)",
+                             (unsigned)strlen(v));
+                } else {
+                    snprintf(resp->location, sizeof resp->location, "%s", v);
+                }
             }
 
             *eol = '\r';
@@ -629,7 +641,8 @@ HttpsResult https_request(HttpsConn *c,
     /* ---- response body -------------------------------------------------- */
     size_t got = 0;
 
-    if (resp->status == 204 || content_len == 0) {
+    if (resp->status == 204 || content_len == 0 ||
+        (resp->status >= 300 && resp->status < 400 && content_len < 0)) {
         /* No body. Anything already read belongs to the next response. */
         if (tail_len > 0 && tail_len <= sizeof c->spill) {
             memcpy(c->spill, tail, tail_len);
@@ -701,4 +714,99 @@ HttpsResult https_request(HttpsConn *c,
 
     if (close_after) c->open = false;
     return HTTPS_OK;
+}
+
+/* ------------------------------------------------------- url fetch + redirects */
+
+/** Splits an absolute URL into scheme, host, port and path. */
+static bool split_url(const char *url, bool *tls, char *host, size_t hostcap,
+                      uint16_t *port, char *path, size_t pathcap)
+{
+    const char *p = url;
+
+    if (strncmp(p, "https://", 8) == 0) { *tls = true;  p += 8; }
+    else if (strncmp(p, "http://", 7) == 0) { *tls = false; p += 7; }
+    else return false;
+
+    const char *slash = strchr(p, '/');
+    const char *hostend = slash ? slash : p + strlen(p);
+
+    const char *colon = memchr(p, ':', (size_t)(hostend - p));
+    size_t hlen = (size_t)((colon ? colon : hostend) - p);
+    if (hlen == 0 || hlen >= hostcap) return false;
+    memcpy(host, p, hlen);
+    host[hlen] = '\0';
+
+    *port = *tls ? 443 : 80;
+    if (colon) {
+        long v = strtol(colon + 1, NULL, 10);
+        if (v < 1 || v > 65535) return false;
+        *port = (uint16_t)v;
+    }
+
+    if (slash) {
+        if (strlen(slash) >= pathcap) return false;
+        snprintf(path, pathcap, "%s", slash);
+    } else {
+        snprintf(path, pathcap, "/");
+    }
+    return true;
+}
+
+HttpsResult https_get_url(const char *url, const char *session_hdr,
+                          uint8_t *out, size_t out_cap,
+                          bool verify, int max_redirects,
+                          HttpsResponse *resp)
+{
+    char current[HTTPS_MAX_URL];
+    snprintf(current, sizeof current, "%s", url);
+
+    for (int hop = 0; hop <= max_redirects; hop++) {
+        bool tls = true;
+        char host[160];
+        char path[HTTPS_MAX_URL];
+        uint16_t port = 443;
+
+        if (!split_url(current, &tls, host, sizeof host, &port, path, sizeof path)) {
+            pong_log("  URL   malformed: %.80s", current);
+            return HTTPS_ERR_PROTOCOL;
+        }
+
+        pong_log("  GET   %s%s:%u%s", tls ? "https://" : "http://", host,
+                 (unsigned)port, hop ? " (redirect)" : "");
+
+        /* A new connection per hop: a redirect normally lands on a different
+         * host, so the keep-alive connection cannot be reused anyway. */
+        HttpsConn *c = https_open(host, port, tls, verify && tls);
+        if (!c) {
+            pong_log("  GET   open failed: %s", https_open_error());
+            return HTTPS_ERR_CONNECT;
+        }
+
+        HttpsResult rc = https_request(c, "GET", path, session_hdr, NULL, 0,
+                                       out, out_cap, resp);
+        https_close(c);
+        if (rc != HTTPS_OK) return rc;
+
+        if (resp->status >= 300 && resp->status < 400 && resp->location[0]) {
+            if (hop == max_redirects) {
+                pong_log("  GET   too many redirects");
+                return HTTPS_ERR_PROTOCOL;
+            }
+            /* Only absolute targets are followed. Every redirect this client
+             * actually encounters is absolute, and resolving relative ones
+             * correctly is more URL machinery than the console needs. */
+            if (strncmp(resp->location, "http", 4) != 0) {
+                pong_log("  GET   relative redirect not supported: %.60s", resp->location);
+                return HTTPS_ERR_PROTOCOL;
+            }
+            snprintf(current, sizeof current, "%s", resp->location);
+            resp->location[0] = '\0';
+            continue;
+        }
+
+        return HTTPS_OK;
+    }
+
+    return HTTPS_ERR_PROTOCOL;
 }

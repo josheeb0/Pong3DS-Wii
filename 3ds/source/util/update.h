@@ -39,6 +39,44 @@
 #define PONG__STR(x)  PONG__STR2(x)
 #define PONG_VERSION_BANNER "Pong3DS build " PONG__STR(PONG_BUILD_ID)
 
+/** Where update checks look. Toggled in the 3DS settings. */
+typedef enum {
+    PONG_UPDATE_SRC_SERVER = 0,  /* /api/version on the game server */
+    PONG_UPDATE_SRC_GITHUB,      /* the repository's Releases */
+} PongUpdateSource;
+
+/*
+ * Where updates can come from, in the order the SOURCE row cycles through.
+ *
+ * The upstream repository is the default: it is where this project is intended
+ * to live, and pointing the shipped default at a personal fork would mean every
+ * console quietly tracking one contributor's branch. The fork stays available
+ * as an explicit choice, which is what you want while the upstream is still
+ * catching up.
+ *
+ * Any owner/repo can be set in sdmc:/3ds/pong3ds.cfg without rebuilding; the
+ * presets are the ones reachable from the menu.
+ */
+#define PONG_GH_OWNER "josheeb0"
+#define PONG_GH_REPO  "Pong3DS-Wii"
+
+typedef struct {
+    PongUpdateSource source;
+    const char *owner;   /* NULL for the server source */
+    const char *repo;
+    const char *label;   /* shown on the menu */
+} PongUpdateTarget;
+
+extern const PongUpdateTarget PONG_UPDATE_TARGETS[];
+extern const int PONG_UPDATE_TARGET_COUNT;
+
+/**
+ * Index of the preset matching this configuration, or -1 for a custom
+ * owner/repo set by hand in the config file -- which the menu must not silently
+ * overwrite.
+ */
+int pong_update_target_index(PongUpdateSource src, const char *owner, const char *repo);
+
 typedef enum {
     PONG_UPDATE_CURRENT = 0,   /* already newest */
     PONG_UPDATE_AVAILABLE,     /* newer build exists */
@@ -52,16 +90,35 @@ typedef struct {
     uint32_t remote_protocol;
     char     dsx_path[96];
     char     cia_path[96];
-    char     release_url[128];
+    char     release_url[192];
+    /* Absolute URL when the source is GitHub; empty for the server source,
+     * where dsx_path is relative to the game server. */
+    char     dsx_url[320];
     char     message[160];
 } PongUpdateInfo;
 
+/**
+ * Asks the configured source what the newest build is.
+ *
+ * The server source reports what that server is running, which is what you want
+ * when the question is "can I play against it". The GitHub source reports the
+ * newest published build regardless of what any server is running, which is
+ * what you want when the server has simply not been redeployed yet -- a gap
+ * that is invisible from the console otherwise.
+ */
 PongUpdateResult pong_update_check(const PongNetConfig *net, uint32_t local_build,
+                                   PongUpdateSource source,
+                                   const char *gh_owner, const char *gh_repo,
                                    PongUpdateInfo *out);
 
 PongUpdateResult pong_update_download(const PongNetConfig *net,
                                       const PongUpdateInfo *info,
                                       const char *dest_path,
                                       char *message, size_t message_cap);
+
+/** Human name for the current target, for the settings row and the footer. */
+const char *pong_update_source_name(PongUpdateSource s);
+const char *pong_update_target_label(PongUpdateSource src, const char *owner,
+                                     const char *repo, char *buf, size_t cap);
 
 #endif /* PONG_UPDATE_H */

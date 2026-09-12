@@ -71,12 +71,22 @@ bool https_is_open(const HttpsConn *c);
 
 void https_close(HttpsConn *c);
 
+/*
+ * Redirect targets are large. A GitHub release asset redirects to a signed URL
+ * of roughly 1100 characters -- a JWT plus an Azure SAS token -- so anything
+ * sized for "a URL" rather than measured against a real one will silently
+ * truncate and produce a baffling 400 from the next hop.
+ */
+#define HTTPS_MAX_URL 2048
+
 typedef struct {
     int      status;        /* HTTP status code, e.g. 200 / 204 / 404 */
     size_t   body_len;
     uint32_t elapsed_ms;
     /* Value of a single response header we care about, or empty. */
     char     session[64];
+    /* Set on a 3xx; empty otherwise. */
+    char     location[HTTPS_MAX_URL];
 } HttpsResponse;
 
 /**
@@ -95,6 +105,21 @@ HttpsResult https_request(HttpsConn *c,
                           const char *session_hdr,
                           const uint8_t *body, size_t body_len,
                           uint8_t *out, size_t out_cap,
+                          HttpsResponse *resp);
+
+/**
+ * GET a URL, following redirects across hosts.
+ *
+ * Opens and closes its own connections, because a redirect usually lands on a
+ * different host and the existing keep-alive connection cannot serve it. That
+ * makes this the wrong tool for the game's hot path -- it is for fetching an
+ * update, where a few extra handshakes do not matter.
+ *
+ * `url` must be absolute (https://host[:port]/path or http://...).
+ */
+HttpsResult https_get_url(const char *url, const char *session_hdr,
+                          uint8_t *out, size_t out_cap,
+                          bool verify, int max_redirects,
                           HttpsResponse *resp);
 
 /** Human-readable form of the last mbedTLS error, for on-screen diagnostics. */

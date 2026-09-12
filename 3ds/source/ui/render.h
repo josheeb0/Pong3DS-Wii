@@ -29,6 +29,7 @@ typedef enum {
     MENU_ROOM,        /* join a room by code, so you can play someone specific */
     MENU_BOT,         /* practice against the CPU */
     MENU_SERVER,      /* edit the server address */
+    MENU_SOURCE,      /* toggle where updates come from */
     MENU_UPDATE,      /* check for a newer build */
     MENU_COUNT
 } PongMenuItem;
@@ -53,6 +54,7 @@ typedef struct {
     PongScreen  screen;
     int         menu_sel;      /* highlighted item, for d-pad navigation */
     const char *room_code;     /* shown while waiting, so it can be read out */
+    const char *update_src;    /* "game server" / "GitHub Releases" */
     uint32_t    build_id;
     const char *status_line;   /* transport description */
     const char *detail_line;   /* rtt / hz / opponent */
