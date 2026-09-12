@@ -60,6 +60,8 @@ typedef struct {
     char detail[96];
     char message[192];   /* holds update-check messages, which are verbose */
     char addr[PONG_ADDR_MAX];
+    char room[PONG_ROOM_CODE_BYTES + 1];
+    int  menu_sel;
 } App;
 
 static void send_hello(App *a);
@@ -70,6 +72,46 @@ static void log_diag(const char *what, const char *detail)
 {
     pong_log_section(what);
     if (detail && detail[0]) pong_log("%s", detail);
+}
+
+/*
+ * Asks for a room code.
+ *
+ * Both players type the SAME code -- there is no "create then share an
+ * assigned code" round trip, because that would need a new server message and
+ * the code is more useful when a person chooses it: it can be agreed out loud
+ * before either console is even switched on.
+ */
+static bool ask_room_code(App *a)
+{
+    char buf[PONG_ROOM_CODE_BYTES + 1];
+    snprintf(buf, sizeof buf, "%s", a->room);
+
+    static SwkbdState kb;
+    swkbdInit(&kb, SWKBD_TYPE_QWERTY, 2, PONG_ROOM_CODE_BYTES);
+    swkbdSetInitialText(&kb, buf);
+    swkbdSetHintText(&kb, "room code, e.g. PONG42");
+    swkbdSetButton(&kb, SWKBD_BUTTON_LEFT, "Cancel", false);
+    swkbdSetButton(&kb, SWKBD_BUTTON_RIGHT, "Join", true);
+    swkbdSetValidation(&kb, SWKBD_NOTEMPTY_NOTBLANK, 0, 0);
+
+    if (swkbdInputText(&kb, buf, sizeof buf) != SWKBD_BUTTON_RIGHT) return false;
+
+    /* Upper-case and strip anything that is not alphanumeric, so a code read
+     * aloud and typed with different capitalisation still matches. */
+    size_t w = 0;
+    for (size_t i = 0; buf[i] && w < PONG_ROOM_CODE_BYTES; i++) {
+        unsigned char c = (unsigned char)buf[i];
+        if (c >= 'a' && c <= 'z') c = (unsigned char)(c - 'a' + 'A');
+        if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) a->room[w++] = (char)c;
+    }
+    a->room[w] = '\0';
+
+    if (w == 0) {
+        snprintf(a->message, sizeof a->message, "room code must have letters or digits");
+        return false;
+    }
+    return true;
 }
 
 /** Opens the software keyboard and applies whatever the user typed. */
@@ -94,17 +136,57 @@ static void edit_server_address(App *a)
     snprintf(a->message, sizeof a->message, "saved");
 }
 
-static void begin_connect(App *a)
+/*
+ * Manual update check.
+ *
+ * Deliberately not automatic on launch: a blocking HTTPS round trip before the
+ * menu even draws would make a cold start feel broken, and during development
+ * `make send` is the fast path anyway.
+ */
+static void do_update_check(App *a)
+{
+    PongUpdateInfo up;
+    snprintf(a->message, sizeof a->message, "checking for updates...");
+    pong_log_section("update check");
+
+    PongUpdateResult r = pong_update_check(&a->cfg.net, PONG_BUILD_ID, &up);
+    pong_log("local build    : %lu", (unsigned long)up.local_build);
+    pong_log("remote build   : %lu", (unsigned long)up.remote_build);
+    pong_log("result         : %s", up.message);
+
+    if (r != PONG_UPDATE_AVAILABLE) {
+        snprintf(a->message, sizeof a->message, "%s", up.message);
+        return;
+    }
+
+    PongUpdateResult d = pong_update_download(&a->cfg.net, &up, PONG_DSX_PATH,
+                                              a->message, sizeof a->message);
+    pong_log("download       : %s", a->message);
+
+    /*
+     * The .3dsx on the SD card is now current. An installed .cia is NOT: a
+     * title cannot install another title without am:u, which belongs to FBI.
+     * Say where to get it rather than implying the running build was replaced.
+     */
+    if (d == PONG_UPDATE_DONE && up.release_url[0]) {
+        snprintf(a->message, sizeof a->message,
+                 "3dsx updated to %lu. CIA: %s",
+                 (unsigned long)up.remote_build, up.release_url);
+    }
+}
+
+static void begin_connect(App *a, uint8_t join_mode)
 {
     pong_log_section("connect attempt");
-    pong_log("target         : %s", a->addr);
+    pong_log("target         : %s  mode=%u  room='%s'",
+             a->addr, (unsigned)join_mode, a->room);
     a->screen = SCREEN_CONNECTING;
     snprintf(a->message, sizeof a->message, "connecting...");
     a->net = pong_net_open(&a->cfg.net);
     if (a->net && pong_net_state(a->net) != PONG_LINK_FAILED) {
         pong_log("transport      : %s", pong_net_describe(a->net));
         send_hello(a);
-        send_join(a, PONG_JOIN_MODE_QUICKMATCH);
+        send_join(a, join_mode);
         a->screen = SCREEN_QUEUED;
     } else {
         snprintf(a->message, sizeof a->message, "%s",
@@ -138,6 +220,9 @@ static void send_join(App *a, uint8_t mode)
     PongJOIN j;
     memset(&j, 0, sizeof j);
     j.mode = mode;
+    if (mode == PONG_JOIN_MODE_ROOM_CODE) {
+        pong_pad_bytes(j.room_code, sizeof j.room_code, a->room);
+    }
     uint8_t buf[64];
     size_t n = pong_write_join(buf, sizeof buf, 2, &j);
     send_frame(a, buf, n);
@@ -371,48 +456,45 @@ int main(void)
 
         /* ---- state machine ---------------------------------------------- */
         if (app.screen == SCREEN_TITLE) {
-            /* Tapping the address field opens the keyboard; tapping CONNECT (or
-             * A) starts the game. Hit-testing uses the same rects the renderer
-             * draws, so what you see is what you can press. */
-            if (net_ready && (kDown & KEY_TOUCH)) {
+            /* D-pad moves the highlight; A activates it. Touch does both at
+             * once. Supporting both matters because the buttons are on the
+             * bottom screen but the game is played with the pad. */
+            if (kDown & KEY_DOWN) app.menu_sel = (app.menu_sel + 1) % MENU_COUNT;
+            if (kDown & KEY_UP)   app.menu_sel = (app.menu_sel + MENU_COUNT - 1) % MENU_COUNT;
+
+            int activate = -1;
+            if (kDown & KEY_A) activate = app.menu_sel;
+            if (kDown & KEY_TOUCH) {
                 touchPosition tp;
                 hidTouchRead(&tp);
-                float tx = (float)tp.px, ty = (float)tp.py;
-                if (pong_ui_hit(&PONG_UI_ADDR_BOX, tx, ty)) {
-                    edit_server_address(&app);
-                } else if (pong_ui_hit(&PONG_UI_CONNECT_BTN, tx, ty)) {
-                    begin_connect(&app);
-                }
+                int hit = pong_ui_menu_hit((float)tp.px, (float)tp.py);
+                if (hit >= 0) { app.menu_sel = hit; activate = hit; }
             }
-            if (net_ready && (kDown & KEY_A)) begin_connect(&app);
 
-            /* X checks for a newer build. Deliberately manual rather than
-             * automatic on launch: a blocking HTTPS round trip before the title
-             * screen even draws would make a cold start feel broken, and the
-             * dev loop uses `make send` anyway. */
-            if (net_ready && (kDown & KEY_X)) {
-                PongUpdateInfo up;
-                snprintf(app.message, sizeof app.message, "checking for updates...");
-                PongUpdateResult r = pong_update_check(&app.cfg.net, PONG_BUILD_ID, &up);
-                if (r == PONG_UPDATE_AVAILABLE) {
-                    PongUpdateResult d = pong_update_download(&app.cfg.net, &up,
-                                                              PONG_DSX_PATH,
-                                                              app.message, sizeof app.message);
-                    /*
-                     * The .3dsx on the SD card is now current. An installed
-                     * .cia is NOT: a title cannot install another title without
-                     * am:u access, which belongs to FBI. So point at the release
-                     * rather than implying the running build was replaced.
-                     */
-                    if (d == PONG_UPDATE_DONE && up.release_url[0]) {
-                        snprintf(app.message, sizeof app.message,
-                                 "3dsx updated. For the CIA: %s", up.release_url);
-                    }
-                } else {
-                    snprintf(app.message, sizeof app.message, "%s", up.message);
+            if (activate >= 0 && net_ready) {
+                app.message[0] = '\0';
+                switch (activate) {
+                case MENU_QUICK:
+                    app.room[0] = '\0';   /* no code to display for a quickmatch */
+                    begin_connect(&app, PONG_JOIN_MODE_QUICKMATCH);
+                    break;
+                case MENU_BOT:
+                    app.room[0] = '\0';
+                    begin_connect(&app, PONG_JOIN_MODE_VS_BOT);
+                    break;
+                case MENU_ROOM:
+                    if (ask_room_code(&app)) begin_connect(&app, PONG_JOIN_MODE_ROOM_CODE);
+                    break;
+                case MENU_SERVER: edit_server_address(&app); break;
+                case MENU_UPDATE: do_update_check(&app); break;
+                default: break;
                 }
+            } else if (activate >= 0) {
+                snprintf(app.message, sizeof app.message, "no network -- is wifi on?");
             }
-        } else if (app.screen == SCREEN_ERROR) {
+        }
+
+        if (app.screen == SCREEN_ERROR) {
             if (kDown & (KEY_TOUCH | KEY_A)) {
                 if (app.net) { pong_net_close(app.net); app.net = NULL; }
                 app.acc_len = 0;
@@ -452,6 +534,10 @@ int main(void)
         memset(&hud, 0, sizeof hud);
         hud.screen = app.screen;
         hud.frame = app.frame;
+        hud.menu_sel = app.menu_sel;
+        hud.build_id = PONG_BUILD_ID;
+        /* Only meaningful while waiting in a room someone else must join. */
+        hud.room_code = app.room[0] ? app.room : NULL;
         hud.my_side = app.client.my_side;
         hud.slow_mode = app.client.slow_mode;
         hud.message = app.message;
