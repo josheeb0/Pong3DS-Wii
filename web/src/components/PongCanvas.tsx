@@ -64,6 +64,8 @@ export default function PongCanvas({ client }: { client: GameClient }) {
     // so holding a key produces exactly the motion a mouse would.
     const held = new Set<string>();
     const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.isContentEditable || target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') return;
       if (['ArrowUp', 'ArrowDown', 'w', 's', 'W', 'S'].includes(e.key)) {
         held.add(e.key);
         e.preventDefault();
