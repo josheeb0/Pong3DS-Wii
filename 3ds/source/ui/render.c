@@ -57,6 +57,26 @@ static void dyn(const char *s, u32 flags, float x, float y, float scale, u32 col
 }
 
 /*
+ * Same, but wrapped to a width.
+ *
+ * Needed because diagnostics carry things we do not control the length of --
+ * hostnames, mbedTLS error strings -- and unwrapped they simply run off the
+ * side of a 320px screen, which is exactly when you most need to read them.
+ *
+ * The wrap width is a trailing vararg and must come AFTER the colour, per
+ * C2D_DrawText's contract.
+ */
+static void dyn_wrap(const char *s, u32 flags, float x, float y, float scale,
+                     u32 color, float wrap_w)
+{
+    C2D_Text t;
+    C2D_TextParse(&t, s_dynamic, s);
+    C2D_TextOptimize(&t);
+    C2D_DrawText(&t, flags | C2D_WithColor | C2D_WordWrap,
+                 x, y, 0.5f, scale, scale, color, wrap_w);
+}
+
+/*
  * Touch regions for the title screen. Declared in the header as constants so
  * the drawing code and the hit-testing in main.c cannot drift apart -- a
  * button you can see but not press is a miserable bug to chase.
@@ -156,11 +176,14 @@ static void draw_top(const PongView *view, const PongHud *hud)
         /* Every path's result, so the failure is diagnosable from the screen
          * rather than by guessing. A fallback's error alone is not enough. */
         if (hud->diag && hud->diag[0]) {
-            dyn(hud->diag, 0, 14.0f, 75.0f, 0.45f, CLR_DIM);
+            /* Top screen is 400 wide; leave a 12px margin each side. */
+            dyn_wrap(hud->diag, 0, 12.0f, 62.0f, 0.42f, CLR_DIM, 376.0f);
         } else if (hud->message) {
-            dyn(hud->message, C2D_AlignCenter, 200.0f, 100.0f, 0.45f, CLR_DIM);
+            dyn_wrap(hud->message, 0, 12.0f, 100.0f, 0.42f, CLR_DIM, 376.0f);
         }
-        dyn("A / TAP = back", C2D_AlignCenter, 200.0f, 210.0f, 0.42f, CLR_DIM);
+        dyn("also written to sd:/3ds/pong3ds.log",
+            C2D_AlignCenter, 200.0f, 196.0f, 0.38f, CLR_DIM);
+        dyn("A / TAP = back", C2D_AlignCenter, 200.0f, 216.0f, 0.42f, CLR_DIM);
         break;
 
     case SCREEN_PLAY:
@@ -181,10 +204,10 @@ static void draw_bottom(const PongView *view, const PongHud *hud)
     C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 46.0f, CLR_PANEL);
 
     if (hud->status_line && hud->status_line[0]) {
-        dyn(hud->status_line, 0, 8.0f, 6.0f, 0.44f, CLR_MINE);
+        dyn_wrap(hud->status_line, 0, 8.0f, 6.0f, 0.42f, CLR_MINE, 250.0f);
     }
     if (hud->detail_line && hud->detail_line[0]) {
-        dyn(hud->detail_line, 0, 8.0f, 24.0f, 0.42f, CLR_DIM);
+        dyn_wrap(hud->detail_line, 0, 8.0f, 24.0f, 0.40f, CLR_DIM, 304.0f);
     }
     if (hud->slow_mode) {
         dyn("SLOW", C2D_AlignRight, 312.0f, 6.0f, 0.42f, CLR_WARN);
@@ -232,7 +255,7 @@ static void draw_bottom(const PongView *view, const PongHud *hud)
             C2D_AlignCenter, 160.0f, 186.0f, 0.36f, CLR_DIM);
 
         if (hud->message && hud->message[0]) {
-            dyn(hud->message, C2D_AlignCenter, 160.0f, 206.0f, 0.36f, CLR_WARN);
+            dyn_wrap(hud->message, 0, 8.0f, 198.0f, 0.34f, CLR_WARN, 304.0f);
         }
     } else {
         C2D_DrawText(&s_tapToStart, C2D_AlignCenter | C2D_WithColor,

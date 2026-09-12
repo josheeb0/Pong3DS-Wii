@@ -64,6 +64,24 @@ typedef struct {
 static void send_hello(App *a);
 static void send_join(App *a, uint8_t mode);
 
+/*
+ * Mirrors a diagnostic to the SD card.
+ *
+ * A TLS error string plus its hex code does not comfortably fit on a 320px
+ * screen, and it is exactly the text you need to read carefully. Writing it to
+ * a file means it can be read on a computer instead of squinted at, and it
+ * survives the console being switched off.
+ */
+static void log_diag(const char *what, const char *detail)
+{
+    FILE *f = fopen(PONG_LOG_PATH, "a");
+    if (!f) return;
+    fprintf(f, "[%llu] %s\n", (unsigned long long)osGetTime(), what);
+    if (detail && detail[0]) fprintf(f, "%s\n", detail);
+    fprintf(f, "----\n");
+    fclose(f);
+}
+
 /** Opens the software keyboard and applies whatever the user typed. */
 static void edit_server_address(App *a)
 {
@@ -391,6 +409,7 @@ int main(void)
             if (pong_net_state(app.net) == PONG_LINK_FAILED && app.screen != SCREEN_ERROR) {
                 /* The detail lives in pong_net_diag(); this is just the headline. */
                 snprintf(app.message, sizeof app.message, "%s", pong_net_error(app.net));
+                log_diag("connection failed", pong_net_diag(app.net));
                 app.screen = SCREEN_ERROR;
             }
 

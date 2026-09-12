@@ -14,6 +14,9 @@
 #include "net.h"
 
 #define PONG_SD_CONFIG "sdmc:/3ds/pong3ds.cfg"
+/* Diagnostics are mirrored here so a long error can be read on a computer
+ * rather than squinted at on a 320px screen. */
+#define PONG_LOG_PATH  "sdmc:/3ds/pong3ds.log"
 
 typedef struct {
     PongNetConfig net;
