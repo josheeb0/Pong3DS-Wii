@@ -210,9 +210,7 @@ export class Clock {
   minRtt = 0;
 
   /** Feed a PONG. `serverTick` is the server's tick at the time it replied. */
-  sample(sentAtMs: number, serverTimeMs: number, serverTick: number, nowMs: number): void {
-    const rtt = nowMs - sentAtMs;
-    if (rtt < 0 || rtt > 5000) return;
+    const rtt = (((nowMs >>> 0) - (sentAtMs >>> 0)) >>> 0);
 
     // Where the server's tick counter stood when the reply reached us.
     const serverTickNow = serverTick + rtt / 2 / TICK_MS;
