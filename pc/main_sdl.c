@@ -350,12 +350,17 @@ int main(int argc, char **argv)
      * looked at rather than taken on trust. --demo fills in a plausible match
      * so the playfield can be captured without a server. */
     const char *shot = NULL;
-    bool demo = false, autoplay = false;
+    bool demo = false, autoplay = false, autobot = false, autoinput = false;
     int shot_after = 8;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--shot") == 0 && i + 1 < argc) shot = argv[i + 1];
         if (strcmp(argv[i], "--demo") == 0) demo = true;
         if (strcmp(argv[i], "--autoplay") == 0) autoplay = true;
+        if (strcmp(argv[i], "--autobot") == 0) autobot = true;
+        /* Drives the paddle from a script, to prove input reaches the server:
+         * the paddle is drawn from the server's snapshot, so if it moves, the
+         * round trip works. */
+        if (strcmp(argv[i], "--autoinput") == 0) autoinput = true;
         if (strcmp(argv[i], "--frames") == 0 && i + 1 < argc) shot_after = atoi(argv[i + 1]);
         if (strcmp(argv[i], "--name") == 0 && i + 1 < argc)
             snprintf(app.name, sizeof app.name, "%s", argv[i + 1]);
@@ -390,6 +395,7 @@ int main(int argc, char **argv)
     /* --autoplay starts a quick match immediately, so the whole path can be
      * exercised from a script rather than by a person pressing Enter. */
     if (autoplay) begin_connect(&app, PONG_JOIN_MODE_QUICKMATCH);
+    if (autobot)  begin_connect(&app, PONG_JOIN_MODE_VS_BOT);
 
     int frames = 0;
     bool running = true;
@@ -545,6 +551,12 @@ int main(int argc, char **argv)
                 if (SDL_GetGamepadButton(app.pad, SDL_GAMEPAD_BUTTON_DPAD_DOWN)) dir += 1.0f;
             }
             if (dir != 0.0f) nudge_paddle(&app, dir, dt);
+        }
+
+        if (autoinput && app.hud.screen == DESK_PLAY) {
+            /* Park it near the top; the server clamps the speed, so the drawn
+             * paddle arriving there proves the whole loop. */
+            pong_client_set_target(&app.client, PONG_FIELD_H_Q4 / 6);
         }
 
         pump_network(&app, now);
