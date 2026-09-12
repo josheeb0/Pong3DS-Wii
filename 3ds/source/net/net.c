@@ -95,30 +95,43 @@ static int lan_connect(const char *host, uint16_t port, uint32_t timeout_ms, cha
     }
 
     int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) { snprintf(err, errcap, "socket() failed (%d)", errno); return -1; }
+    if (fd < 0) { snprintf(err, errcap, "socket() failed (errno %d)", errno); return -1; }
 
     int flags = fcntl(fd, F_GETFL, 0);
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 
     int rc = connect(fd, (struct sockaddr *)&addr, sizeof addr);
-    if (rc < 0 && errno != EINPROGRESS) {
-        snprintf(err, errcap, "connect failed (%d)", errno);
+    if (rc != 0 && errno != EINPROGRESS && errno != EALREADY) {
+        snprintf(err, errcap, "connect to %s:%u failed (errno %d)",
+                 host, (unsigned)port, errno);
         close(fd);
         return -1;
     }
-    if (rc < 0) {
-        struct pollfd p = { .fd = fd, .events = POLLOUT, .revents = 0 };
-        if (poll(&p, 1, (int)timeout_ms) <= 0 || !(p.revents & POLLOUT)) {
-            snprintf(err, errcap, "no LAN server at %s:%u", host, port);
-            close(fd);
-            return -1;
-        }
-        int soerr = 0;
-        socklen_t slen = sizeof soerr;
-        if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &soerr, &slen) < 0 || soerr != 0) {
-            snprintf(err, errcap, "LAN connect refused (%d)", soerr);
-            close(fd);
-            return -1;
+
+    /*
+     * Probe by re-calling connect() rather than waiting on poll(POLLOUT).
+     * poll never signals connect completion on this console -- see the note in
+     * https.c, where relying on it made every connection fail after the full
+     * timeout with a stale EINPROGRESS in errno.
+     */
+    if (rc != 0) {
+        uint64_t deadline = osGetTime() + timeout_ms;
+        for (;;) {
+            rc = connect(fd, (struct sockaddr *)&addr, sizeof addr);
+            if (rc == 0 || errno == EISCONN) break;
+            if (errno != EINPROGRESS && errno != EALREADY) {
+                snprintf(err, errcap, "no LAN server at %s:%u (errno %d)",
+                         host, (unsigned)port, errno);
+                close(fd);
+                return -1;
+            }
+            if (osGetTime() >= deadline) {
+                snprintf(err, errcap, "no LAN server at %s:%u (timed out)",
+                         host, (unsigned)port);
+                close(fd);
+                return -1;
+            }
+            svcSleepThread(20 * 1000 * 1000LL);   /* 20ms */
         }
     }
 

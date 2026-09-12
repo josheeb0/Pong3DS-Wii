@@ -124,12 +124,23 @@ void https_global_exit(void)
 /** Read timeout, enforced with poll() since the 3DS has no SO_RCVTIMEO. */
 #define READ_TIMEOUT_MS 8000
 
-/** Blocks until the socket is readable, or the deadline passes. */
+/**
+ * Blocks until the socket is readable, or the deadline passes.
+ *
+ * poll() proved unreliable on this console for connect completion (see
+ * wait_connected), so it is not fully trusted here either. The distinction that
+ * matters: poll returning 0 is a genuine timeout and should fail, but poll
+ * returning an ERROR means poll itself is not doing its job -- and since the
+ * socket is blocking by this point, going ahead with the read is strictly
+ * better than inventing a timeout that did not happen.
+ */
 static bool wait_readable(int fd, int timeout_ms)
 {
     struct pollfd p = { .fd = fd, .events = POLLIN, .revents = 0 };
     int r = poll(&p, 1, timeout_ms);
-    return r > 0 && (p.revents & (POLLIN | POLLHUP)) != 0;
+    if (r > 0) return (p.revents & (POLLIN | POLLHUP)) != 0;
+    if (r < 0) return true;   /* poll is broken here; let the blocking read run */
+    return false;             /* genuine timeout */
 }
 
 /* mbedTLS BIO callbacks. We supply our own rather than using net_sockets.c so
@@ -158,8 +169,50 @@ static int bio_recv(void *ctx, unsigned char *buf, size_t len)
     return n;
 }
 
-/** Blocking connect with a deadline, so a dead host does not hang the game. */
-static int tcp_connect(const char *host, uint16_t port, uint32_t timeout_ms)
+/*
+ * Waits for a non-blocking connect to complete.
+ *
+ * NOT poll(POLLOUT). That is the textbook way to do this and it is what the
+ * first version used -- and on the 3DS it silently never fires, so every
+ * connection failed after the full timeout while errno still held EINPROGRESS
+ * from the original connect(). The error message then blamed EINPROGRESS, which
+ * is not an error at all but the expected "in progress" return.
+ *
+ * Calling connect() again on the same non-blocking socket is the portable probe:
+ * it returns EALREADY or EINPROGRESS while pending, EISCONN once established,
+ * and the real error otherwise. It depends only on connect(), which the console
+ * certainly implements, since that is what started the attempt.
+ */
+static int wait_connected(int fd, const struct sockaddr *addr, socklen_t alen,
+                          uint32_t timeout_ms, char *err, size_t errcap)
+{
+    uint64_t deadline = osGetTime() + timeout_ms;
+
+    for (;;) {
+        int rc = connect(fd, addr, alen);
+        if (rc == 0 || errno == EISCONN) return 0;
+
+        if (errno != EINPROGRESS && errno != EALREADY) {
+            snprintf(err, errcap, "connect refused (errno %d)", errno);
+            return -1;
+        }
+        if (osGetTime() >= deadline) {
+            snprintf(err, errcap, "connect timed out after %lums", (unsigned long)timeout_ms);
+            return -1;
+        }
+        svcSleepThread(30 * 1000 * 1000LL);   /* 30ms */
+    }
+}
+
+/**
+ * Opens a TCP connection, reporting WHICH stage failed.
+ *
+ * The stage matters: "could not resolve" and "connection refused" and "timed
+ * out" send you to completely different places, and the previous version
+ * collapsed all of them into one message plus a stale errno.
+ */
+static int tcp_connect(const char *host, uint16_t port, uint32_t timeout_ms,
+                       char *err, size_t errcap)
 {
     char portstr[8];
     snprintf(portstr, sizeof portstr, "%u", (unsigned)port);
@@ -170,43 +223,42 @@ static int tcp_connect(const char *host, uint16_t port, uint32_t timeout_ms)
     hints.ai_socktype = SOCK_STREAM;
 
     struct addrinfo *res = NULL;
-    if (getaddrinfo(host, portstr, &hints, &res) != 0 || res == NULL) return -1;
+    int gai = getaddrinfo(host, portstr, &hints, &res);
+    if (gai != 0 || res == NULL) {
+        snprintf(err, errcap, "cannot resolve %s (gai %d)", host, gai);
+        return -1;
+    }
 
     int fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-    if (fd < 0) { freeaddrinfo(res); return -1; }
+    if (fd < 0) {
+        snprintf(err, errcap, "socket() failed (errno %d)", errno);
+        freeaddrinfo(res);
+        return -1;
+    }
 
-    /* Non-blocking connect + poll so we control the timeout. A blocking
-     * connect to an unreachable LAN address can stall for a minute. */
     int flags = fcntl(fd, F_GETFL, 0);
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 
     int rc = connect(fd, res->ai_addr, res->ai_addrlen);
-    if (rc < 0 && errno != EINPROGRESS) {
+    if (rc != 0 && errno != EINPROGRESS && errno != EALREADY) {
+        snprintf(err, errcap, "connect to %s:%u failed (errno %d)", host,
+                 (unsigned)port, errno);
         close(fd);
         freeaddrinfo(res);
         return -1;
     }
 
-    if (rc < 0) {
-        struct pollfd p = { .fd = fd, .events = POLLOUT, .revents = 0 };
-        if (poll(&p, 1, (int)timeout_ms) <= 0 || !(p.revents & POLLOUT)) {
-            close(fd);
-            freeaddrinfo(res);
-            return -1;
-        }
-        int soerr = 0;
-        socklen_t slen = sizeof soerr;
-        if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &soerr, &slen) < 0 || soerr != 0) {
-            close(fd);
-            freeaddrinfo(res);
-            return -1;
-        }
+    if (rc != 0 && wait_connected(fd, res->ai_addr, res->ai_addrlen,
+                                  timeout_ms, err, errcap) != 0) {
+        close(fd);
+        freeaddrinfo(res);
+        return -1;
     }
 
     freeaddrinfo(res);
 
-    /* Back to blocking: the request/response loop is simpler, and the 3DS
-     * network code runs on its own worker thread where blocking is fine. */
+    /* Back to blocking: the request loop is simpler, and this runs on a worker
+     * thread where blocking is fine. */
     fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
 
     /* Latency beats throughput for 20-byte input frames. */
@@ -238,10 +290,9 @@ HttpsConn *https_open(const char *host, uint16_t port, bool use_tls, bool verify
     snprintf(c->host, sizeof c->host, "%s", host);
     c->tls = use_tls;
 
-    c->fd = tcp_connect(host, port, 4000);
+    /* 8s: a 3DS on wifi reaching a host through a tunnel is not fast. */
+    c->fd = tcp_connect(host, port, 8000, g_last_open_error, sizeof g_last_open_error);
     if (c->fd < 0) {
-        snprintf(g_last_open_error, sizeof g_last_open_error,
-                 "tcp connect to %s:%u failed (errno %d)", host, (unsigned)port, errno);
         free(c);
         return NULL;
     }
