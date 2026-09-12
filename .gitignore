@@ -20,8 +20,13 @@ build/
 3ds/vendor/.src/
 3ds/vendor/mbedtls/
 3ds/vendor/tools/
-3ds/test/test_proto
-3ds/test/test_play
+# Host test binaries have no extension, so match by prefix and keep the
+# sources. Enumerating them by name meant adding a new test silently committed
+# its binary -- which then shadowed compilation on a different architecture in
+# CI, producing a genuinely baffling "Syntax error" from the shell.
+3ds/test/test_*
+!3ds/test/test_*.c
+!3ds/test/test_*.h
 3ds/test/*.dSYM
 
 # Generated at package time by build-cia.sh -- 3s of silence does not

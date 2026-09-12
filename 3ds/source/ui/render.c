@@ -56,6 +56,19 @@ static void dyn(const char *s, u32 flags, float x, float y, float scale, u32 col
     C2D_DrawText(&t, flags | C2D_WithColor, x, y, 0.5f, scale, scale, color);
 }
 
+/*
+ * Touch regions for the title screen. Declared in the header as constants so
+ * the drawing code and the hit-testing in main.c cannot drift apart -- a
+ * button you can see but not press is a miserable bug to chase.
+ */
+const PongRect PONG_UI_ADDR_BOX    = {  14.0f,  72.0f, 292.0f, 42.0f };
+const PongRect PONG_UI_CONNECT_BTN = {  14.0f, 128.0f, 292.0f, 48.0f };
+
+bool pong_ui_hit(const PongRect *r, float x, float y)
+{
+    return x >= r->x && x <= r->x + r->w && y >= r->y && y <= r->y + r->h;
+}
+
 /* ------------------------------------------------------------------- top */
 
 static void draw_playfield(const PongView *view, const PongHud *hud)
@@ -189,19 +202,41 @@ static void draw_bottom(const PongView *view, const PongHud *hud)
         dyn("SLIDE TO MOVE  ·  D-PAD / CIRCLE PAD ALSO WORK",
             C2D_AlignCenter, 160.0f, 60.0f, 0.38f, CLR_DIM);
         dyn("START = quit", C2D_AlignCenter, 160.0f, 216.0f, 0.38f, CLR_DIM);
-    } else {
-        /* "TAP THE TOUCH SCREEN TO CONTINUE" -- straight from the sketch. */
+    } else if (hud->screen == SCREEN_TITLE) {
+        /* Server address dialog. One field, one button -- Direct Connect. */
+        dyn("SERVER ADDRESS", 0, 16.0f, 54.0f, 0.42f, CLR_DIM);
+
+        const PongRect *a = &PONG_UI_ADDR_BOX;
+        C2D_DrawRectSolid(a->x, a->y, 0.0f, a->w, a->h, C2D_Color32(0x0f, 0x16, 0x1e, 0xFF));
+        C2D_DrawRectSolid(a->x, a->y, 0.0f, a->w, 1.0f, CLR_NET);
+        C2D_DrawRectSolid(a->x, a->y + a->h - 1.0f, 0.0f, a->w, 1.0f, CLR_NET);
+        C2D_DrawRectSolid(a->x, a->y, 0.0f, 1.0f, a->h, CLR_NET);
+        C2D_DrawRectSolid(a->x + a->w - 1.0f, a->y, 0.0f, 1.0f, a->h, CLR_NET);
+
+        dyn(hud->server_addr && hud->server_addr[0] ? hud->server_addr : "(not set)",
+            0, a->x + 10.0f, a->y + 12.0f, 0.5f, CLR_TEXT);
+        dyn("tap to edit", C2D_AlignRight, a->x + a->w - 8.0f, a->y + 28.0f, 0.34f, CLR_DIM);
+
+        /* CONNECT, pulsing so it reads as the primary action. */
+        const PongRect *b = &PONG_UI_CONNECT_BTN;
         bool on = ((hud->frame / 30) % 2) == 0;
         u32 border = on ? CLR_MINE : CLR_NET;
-        float x = 24.0f, y = 70.0f, w = 272.0f, h = 100.0f;
-        C2D_DrawRectSolid(x, y, 0.0f, w, 2.0f, border);
-        C2D_DrawRectSolid(x, y + h - 2.0f, 0.0f, w, 2.0f, border);
-        C2D_DrawRectSolid(x, y, 0.0f, 2.0f, h, border);
-        C2D_DrawRectSolid(x + w - 2.0f, y, 0.0f, 2.0f, h, border);
+        C2D_DrawRectSolid(b->x, b->y, 0.0f, b->w, b->h, C2D_Color32(0x0c, 0x18, 0x20, 0xFF));
+        C2D_DrawRectSolid(b->x, b->y, 0.0f, b->w, 2.0f, border);
+        C2D_DrawRectSolid(b->x, b->y + b->h - 2.0f, 0.0f, b->w, 2.0f, border);
+        C2D_DrawRectSolid(b->x, b->y, 0.0f, 2.0f, b->h, border);
+        C2D_DrawRectSolid(b->x + b->w - 2.0f, b->y, 0.0f, 2.0f, b->h, border);
+        dyn("CONNECT", C2D_AlignCenter, 160.0f, b->y + 16.0f, 0.6f, CLR_TEXT);
 
+        dyn("A = connect   X = check for updates",
+            C2D_AlignCenter, 160.0f, 186.0f, 0.36f, CLR_DIM);
+
+        if (hud->message && hud->message[0]) {
+            dyn(hud->message, C2D_AlignCenter, 160.0f, 206.0f, 0.36f, CLR_WARN);
+        }
+    } else {
         C2D_DrawText(&s_tapToStart, C2D_AlignCenter | C2D_WithColor,
                      160.0f, 96.0f, 0.5f, 0.55f, 0.55f, CLR_TEXT);
-
         if (hud->message && hud->message[0] && hud->screen != SCREEN_ERROR) {
             dyn(hud->message, C2D_AlignCenter, 160.0f, 190.0f, 0.4f, CLR_DIM);
         }

@@ -15,6 +15,15 @@
 #include <stdbool.h>
 #include "client.h"
 
+typedef struct { float x, y, w, h; } PongRect;
+
+/* Title-screen touch targets, shared by the renderer and the input handler so
+ * a visible button is always a pressable one. */
+extern const PongRect PONG_UI_ADDR_BOX;
+extern const PongRect PONG_UI_CONNECT_BTN;
+
+bool pong_ui_hit(const PongRect *r, float x, float y);
+
 typedef enum {
     SCREEN_TITLE = 0,
     SCREEN_CONNECTING,
@@ -33,6 +42,7 @@ typedef struct {
     uint32_t    rtt_ms;
     uint32_t    hz;
     bool        touch_hint;    /* pulse the "tap to continue" box */
+    const char *server_addr;   /* shown in the address field on the title */
     bool        slow_mode;
     uint8_t     my_side;
     uint32_t    frame;         /* for animation */

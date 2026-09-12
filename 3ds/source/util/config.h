@@ -27,4 +27,7 @@ void pong_config_load(PongConfig *cfg);
 /** Persists the transport that worked, so the next launch starts there. */
 void pong_config_remember_mode(const PongConfig *cfg, PongNetMode mode);
 
+/** Writes the whole config to the SD card, so an entered address persists. */
+void pong_config_save(const PongConfig *cfg);
+
 #endif /* PONG_CONFIG_H */

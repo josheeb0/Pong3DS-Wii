@@ -245,8 +245,12 @@ PongNet *pong_net_open(const PongNetConfig *cfg)
      * connect from a phone hotspot would stall for the full timeout on every
      * launch for no possible benefit. */
     bool same_subnet = on_lan(cfg->lan_subnet, n->local_ip, sizeof n->local_ip);
-    bool try_lan = (cfg->mode == PONG_MODE_LAN) ||
-                   (cfg->mode == PONG_MODE_AUTO && same_subnet);
+    /* No lan_host configured means no raw-TCP port to talk to -- which is the
+     * correct default, since a deployment behind 443 has no such port. */
+    bool lan_configured = cfg->lan_host[0] != '\0';
+    bool try_lan = lan_configured &&
+                   ((cfg->mode == PONG_MODE_LAN) ||
+                    (cfg->mode == PONG_MODE_AUTO && same_subnet));
 
     if (try_lan) {
         n->lan_attempted = true;
@@ -265,8 +269,12 @@ PongNet *pong_net_open(const PongNetConfig *cfg)
     }
 
     if (!try_lan) {
-        snprintf(n->lan_err, sizeof n->lan_err,
-                 "skipped: %s is not on %s", n->local_ip, cfg->lan_subnet);
+        if (!lan_configured) {
+            snprintf(n->lan_err, sizeof n->lan_err, "not configured (using HTTPS)");
+        } else {
+            snprintf(n->lan_err, sizeof n->lan_err,
+                     "skipped: %s is not on %s", n->local_ip, cfg->lan_subnet);
+        }
     }
 
     if (cfg->mode == PONG_MODE_LAN) {
@@ -341,7 +349,15 @@ const char *pong_net_session(const PongNet *n) { return n ? n->session : ""; }
 
 bool pong_net_send(PongNet *n, const uint8_t *frame, size_t len)
 {
-if (!n || (n->state != PONG_LINK_OPEN && !(n->active == PONG_MODE_WEB && n->state == PONG_LINK_CONNECTING))) return false;
+    /*
+     * The HTTP path starts in CONNECTING: its worker thread has not completed
+     * the first request yet. HELLO and JOIN are queued right after open(), so
+     * refusing to queue while connecting would silently drop them and the
+     * client would sit in a lobby it never actually joined.
+     */
+    if (!n) return false;
+    bool web_warming = (n->active == PONG_MODE_WEB && n->state == PONG_LINK_CONNECTING);
+    if (n->state != PONG_LINK_OPEN && !web_warming) return false;
 
     if (n->active == PONG_MODE_LAN) {
         ssize_t w = send(n->sock, frame, len, 0);

@@ -13,9 +13,9 @@ LDFLAGS := -fsanitize=address,undefined
 PROTO := ../source/net/pong_proto.c
 CLIENT := ../source/game/client.c
 
-.PHONY: all run play clean
+.PHONY: all run play addr clean
 
-all: test_proto test_play
+all: test_proto test_play test_addr
 
 test_proto: test_proto.c $(PROTO) ../source/net/pong_proto.h golden_data.h
 	$(CC) $(CFLAGS) -o $@ test_proto.c $(PROTO) $(LDFLAGS)
@@ -23,11 +23,19 @@ test_proto: test_proto.c $(PROTO) ../source/net/pong_proto.h golden_data.h
 test_play: test_play.c $(PROTO) $(CLIENT) ../source/game/client.h
 	$(CC) $(CFLAGS) -I../source/net -I../source/game -o $@ test_play.c $(PROTO) $(CLIENT) $(LDFLAGS)
 
-run: test_proto
+run: test_proto test_addr
 	./test_proto
+	@echo ""
+	./test_addr
 
 play: test_play
 	./test_play $(ARGS)
 
+test_addr: test_addr.c ../source/util/addr.c ../source/util/addr.h
+	$(CC) $(CFLAGS) -I../source/net -I../source/util -o $@ test_addr.c ../source/util/addr.c $(LDFLAGS)
+
+addr: test_addr
+	./test_addr
+
 clean:
-	rm -rf test_proto test_play *.dSYM
+	rm -rf test_proto test_play test_addr *.dSYM

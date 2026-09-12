@@ -24,6 +24,7 @@
 #include "render.h"
 #include "config.h"
 #include "update.h"
+#include "addr.h"
 
 #define SOC_ALIGN      0x1000
 #define SOC_BUFFERSIZE 0x100000
@@ -57,7 +58,49 @@ typedef struct {
     char status[96];
     char detail[96];
     char message[192];   /* holds update-check messages, which are verbose */
+    char addr[PONG_ADDR_MAX];
 } App;
+
+static void send_hello(App *a);
+static void send_join(App *a, uint8_t mode);
+
+/** Opens the software keyboard and applies whatever the user typed. */
+static void edit_server_address(App *a)
+{
+    char buf[PONG_ADDR_MAX];
+    snprintf(buf, sizeof buf, "%s", a->addr);
+
+    if (!pong_addr_prompt(buf, sizeof buf, a->addr)) return;   /* cancelled */
+
+    char err[96];
+    PongNetConfig probe = a->cfg.net;
+    if (!pong_addr_parse(buf, &probe, err, sizeof err)) {
+        snprintf(a->message, sizeof a->message, "%s", err);
+        return;
+    }
+
+    a->cfg.net = probe;
+    pong_addr_format(&a->cfg.net, a->addr, sizeof a->addr);
+    /* Persist immediately: typing an address on a 3DS keyboard once is enough. */
+    pong_config_save(&a->cfg);
+    snprintf(a->message, sizeof a->message, "saved");
+}
+
+static void begin_connect(App *a)
+{
+    a->screen = SCREEN_CONNECTING;
+    snprintf(a->message, sizeof a->message, "connecting...");
+    a->net = pong_net_open(&a->cfg.net);
+    if (a->net && pong_net_state(a->net) != PONG_LINK_FAILED) {
+        send_hello(a);
+        send_join(a, PONG_JOIN_MODE_QUICKMATCH);
+        a->screen = SCREEN_QUEUED;
+    } else {
+        snprintf(a->message, sizeof a->message, "%s",
+                 a->net ? pong_net_error(a->net) : "out of memory");
+        a->screen = SCREEN_ERROR;
+    }
+}
 
 static bool send_frame(App *a, const uint8_t *buf, size_t len)
 {
@@ -259,6 +302,7 @@ int main(void)
     memset(&app, 0, sizeof app);
     pong_client_init(&app.client);
     pong_config_load(&app.cfg);
+    pong_addr_format(&app.cfg.net, app.addr, sizeof app.addr);
     app.screen = SCREEN_TITLE;
 
     /* Sockets. The buffer must be page-aligned and becomes inaccessible to us
@@ -284,6 +328,21 @@ int main(void)
 
         /* ---- state machine ---------------------------------------------- */
         if (app.screen == SCREEN_TITLE) {
+            /* Tapping the address field opens the keyboard; tapping CONNECT (or
+             * A) starts the game. Hit-testing uses the same rects the renderer
+             * draws, so what you see is what you can press. */
+            if (net_ready && (kDown & KEY_TOUCH)) {
+                touchPosition tp;
+                hidTouchRead(&tp);
+                float tx = (float)tp.px, ty = (float)tp.py;
+                if (pong_ui_hit(&PONG_UI_ADDR_BOX, tx, ty)) {
+                    edit_server_address(&app);
+                } else if (pong_ui_hit(&PONG_UI_CONNECT_BTN, tx, ty)) {
+                    begin_connect(&app);
+                }
+            }
+            if (net_ready && (kDown & KEY_A)) begin_connect(&app);
+
             /* X checks for a newer build. Deliberately manual rather than
              * automatic on launch: a blocking HTTPS round trip before the title
              * screen even draws would make a cold start feel broken, and the
@@ -299,20 +358,6 @@ int main(void)
                     (void)d;
                 } else {
                     snprintf(app.message, sizeof app.message, "%s", up.message);
-                }
-            }
-            if (net_ready && (kDown & (KEY_TOUCH | KEY_A))) {
-                app.screen = SCREEN_CONNECTING;
-                snprintf(app.message, sizeof app.message, "connecting...");
-                app.net = pong_net_open(&app.cfg.net);
-                if (app.net && pong_net_state(app.net) != PONG_LINK_FAILED) {
-                    send_hello(&app);
-                    send_join(&app, PONG_JOIN_MODE_QUICKMATCH);
-                    app.screen = SCREEN_QUEUED;
-                } else {
-                    snprintf(app.message, sizeof app.message, "%s",
-                             app.net ? pong_net_error(app.net) : "out of memory");
-                    app.screen = SCREEN_ERROR;
                 }
             }
         } else if (app.screen == SCREEN_ERROR) {
@@ -358,6 +403,7 @@ int main(void)
         hud.slow_mode = app.client.slow_mode;
         hud.message = app.message;
         hud.diag = app.net ? pong_net_diag(app.net) : NULL;
+        hud.server_addr = app.addr;
 
         if (app.net) {
             snprintf(app.status, sizeof app.status, "%s", pong_net_describe(app.net));

@@ -62,10 +62,17 @@ void pong_config_load(PongConfig *cfg)
 {
     memset(cfg, 0, sizeof *cfg);
 
-    /* Compiled-in fallbacks, so the app still runs if romfs is missing. */
-    snprintf(cfg->net.lan_host, sizeof cfg->net.lan_host, "192.168.4.29");
+    /*
+     * Compiled-in fallbacks, so the app still runs if romfs is missing.
+     *
+     * lan_host is EMPTY by default. The LAN path is a raw TCP socket on its own
+     * port, which cannot share 443 with HTTPS -- so assuming a second port
+     * exists would be wrong for any deployment that only publishes 443. It is
+     * an opt-in optimisation: set lan_host to enable it.
+     */
+    cfg->net.lan_host[0] = '\0';
     cfg->net.lan_port = 8787;
-    snprintf(cfg->net.lan_subnet, sizeof cfg->net.lan_subnet, "192.168.4.");
+    cfg->net.lan_subnet[0] = '\0';
     snprintf(cfg->net.web_host, sizeof cfg->net.web_host, "pong.wardcrew.com");
     cfg->net.web_port = 443;
     cfg->net.web_tls = true;
@@ -77,6 +84,11 @@ void pong_config_load(PongConfig *cfg)
 
     parse_file(cfg, "romfs:/config.txt");
     parse_file(cfg, PONG_SD_CONFIG);   /* SD wins */
+}
+
+void pong_config_save(const PongConfig *cfg)
+{
+    pong_config_remember_mode(cfg, cfg->net.mode);
 }
 
 void pong_config_remember_mode(const PongConfig *cfg, PongNetMode mode)

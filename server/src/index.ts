@@ -129,7 +129,9 @@ const tcp = createTcpServer((sock: Socket) => {
   // A TCP client has no HTTP bootstrap, so it gets a session on connect and
   // receives its WELCOME as the first frame on the stream.
   const ctx = makeCtx();
-if (sessions.size >= config.maxSessions) {
+  // Refuse rather than accept-then-fail: a TCP client has no HTTP bootstrap to
+  // report a 503 through, so the honest signal is a closed connection.
+  if (sessions.size >= config.maxSessions) {
     sock.destroy();
     return;
   }
@@ -227,9 +229,15 @@ http.server.listen(config.httpPort, () => {
   if (config.staticDir) console.log(`[pong] static    ${config.staticDir}`);
 });
 
-tcp.listen(config.tcpPort, () => {
-  console.log(`[pong] tcp (3ds) :${config.tcpPort}`);
-});
+if (config.tcpPort > 0) {
+  tcp.listen(config.tcpPort, () => {
+    console.log(`[pong] tcp (3ds) :${config.tcpPort}  (LAN fast path)`);
+  });
+} else {
+  // Not a degraded mode: the 3DS reaches the same server over HTTPS on the
+  // HTTP port, which is all a 443-only deployment can offer anyway.
+  console.log('[pong] tcp disabled (TCP_PORT=0) -- 3DS will use the HTTPS path');
+}
 
 loop();
 console.log(`[pong] sim ${config.tickHz}Hz, snapshots ${C.SNAPSHOT_HZ}Hz, protocol v${PROTOCOL_VERSION}`);
@@ -243,7 +251,7 @@ function shutdown(signal: string): void {
   console.log(`[pong] ${signal}, draining`);
   for (const s of sessions.all()) s.close(ByeCode.NORMAL);
   wss.close();
-  tcp.close();
+  if (config.tcpPort > 0) tcp.close();
   http.server.close();
   // Give BYE frames a moment to leave before the socket dies under them.
   setTimeout(() => process.exit(0), 500).unref();
