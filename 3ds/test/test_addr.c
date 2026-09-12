@@ -82,8 +82,9 @@ int main(void)
     ok("http://example.com",          "example.com",       80,   0, PONG_MODE_WEB);
 
     /* The raw TCP fast path, reachable without editing a config file. */
-    ok("tcp://192.168.4.29:8787",     "192.168.4.29",      8787, 0, PONG_MODE_LAN);
-    ok("tcp://192.168.4.29",          "192.168.4.29",      8787, 0, PONG_MODE_LAN);
+    ok("tcp://192.168.4.29:8787",     "192.168.4.29",      8787, 0, PONG_MODE_AUTO);
+    ok("tcp://192.168.4.29",          "192.168.4.29",      8787, 0, PONG_MODE_AUTO);
+    ok("tcp://rdesktop.local:9787",   "rdesktop.local",    9787, 0, PONG_MODE_AUTO);
 
     printf("\n=== a LAN address must not strand the console ===\n");
     {
@@ -115,13 +116,18 @@ int main(void)
             printf("  ok   derives subnet '%s' so a foreign network skips LAN\n", c.lan_subnet);
         }
 
-        /* An explicit scheme is still taken literally. */
+        /* Nor does an explicit tcp://. Reported from a console: tcp:// with a
+         * .local host failed hard with nothing playable, because LAN-only left
+         * no fallback. Typing a scheme is deliberate; being stranded is not. */
         memset(&c, 0, sizeof c);
-        pong_addr_parse("tcp://192.168.4.29", &c, e, sizeof e);
-        if (c.mode != PONG_MODE_LAN) {
-            printf("  FAIL explicit tcp:// should stay LAN-only\n"); fails++;
+        snprintf(c.web_host, sizeof c.web_host, "pong.wardcrew.com");
+        pong_addr_parse("tcp://rdesktop.local:9787", &c, e, sizeof e);
+        if (c.mode == PONG_MODE_LAN) {
+            printf("  FAIL explicit tcp:// strands the console with no fallback\n"); fails++;
+        } else if (strcmp(c.web_host, "pong.wardcrew.com") != 0) {
+            printf("  FAIL tcp:// destroyed the web host\n"); fails++;
         } else {
-            printf("  ok   explicit tcp:// is still LAN-only\n");
+            printf("  ok   explicit tcp:// still falls back to %s\n", c.web_host);
         }
     }
 

@@ -12,11 +12,20 @@
  *   192.168.4.29:8788          -> plain http      (a LAN port implies no TLS)
  *   http://192.168.4.29:8788   -> plain http, explicit
  *   https://example.com        -> https on 443, explicit
- *   tcp://192.168.4.29:8787    -> raw TCP fast path (60Hz, LAN only)
+ *   tcp://192.168.4.29:8787    -> raw TCP fast path (60Hz), web as fallback
  *
  * The `tcp://` form is how the LAN fast path is reached without editing a
  * config file. It is a separate scheme rather than a magic port number because
  * it is genuinely a different protocol, not the same one on another port.
+ *
+ * A LAN address never disables the web path. Forcing LAN-only is a debugging
+ * switch and lives in pong3ds.cfg as mode=lan, not in this box: an address
+ * typed here should never be able to make the console refuse to play.
+ *
+ * Note for anyone pointing this at their own server: .local names do not work.
+ * They are resolved by multicast DNS, which the 3DS has no resolver for, so the
+ * address works from every laptop on the network and fails only on the console.
+ * Use the IP.
  */
 
 #include "addr.h"
@@ -181,13 +190,25 @@ bool pong_addr_parse(const char *input, PongNetConfig *net, char *err, size_t er
     }
 
     if (raw_tcp) {
-        /* An explicit tcp:// is taken literally: LAN or nothing. Someone who
-         * types a scheme is being deliberate, and it stays available as the way
-         * to test the raw path without the web path masking a failure. */
+        /*
+         * Also AUTO. I had this as LAN-only on the reasoning that typing a
+         * scheme is deliberate, and the first person to use it typed
+         * tcp://<host>.local and got a hard failure with no fallback and
+         * nothing playable. "Deliberate" described the typing, not the wish:
+         * nobody means "and if that fails, refuse to play".
+         *
+         * LAN-only remains reachable by putting mode=lan in pong3ds.cfg, which
+         * is where a debugging switch belongs -- it is the thing you want when
+         * proving the raw path works without the web path hiding a failure, and
+         * it is not the thing you want from an address box.
+         */
         snprintf(net->lan_host, sizeof net->lan_host, "%s", host);
         net->lan_port = port ? port : 8787;
-        net->lan_subnet[0] = '\0';   /* explicit address: always try it */
-        net->mode = PONG_MODE_LAN;
+        /* Only an IP tells us which network it belongs to; for a hostname we
+         * cannot know, so the attempt is made wherever we are. */
+        if (is_private_ipv4(host)) derive_subnet(host, net->lan_subnet, sizeof net->lan_subnet);
+        else net->lan_subnet[0] = '\0';
+        net->mode = PONG_MODE_AUTO;
         return true;
     }
 
@@ -214,7 +235,16 @@ bool pong_addr_parse(const char *input, PongNetConfig *net, char *err, size_t er
 
 void pong_addr_format(const PongNetConfig *net, char *out, size_t cap)
 {
-    if (net->mode == PONG_MODE_LAN && net->lan_host[0]) {
+    /*
+     * Keyed on the LAN host being set, not on the mode.
+     *
+     * Both LAN and AUTO can carry one now, and checking the mode meant an AUTO
+     * config with a LAN host formatted from the web fields -- which produced
+     * "http://:0" when they were empty, and that string is what gets saved to
+     * the SD card and shown on the menu. Caught by the round-trip test rather
+     * than by reading it, which is the whole reason that test exists.
+     */
+    if (net->lan_host[0]) {
         snprintf(out, cap, "tcp://%s:%u", net->lan_host, (unsigned)net->lan_port);
         return;
     }

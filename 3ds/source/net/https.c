@@ -4,6 +4,7 @@
 #include <3ds.h>
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>   /* strcasecmp */
 #include <stdlib.h>
 #include <errno.h>
 #include <unistd.h>
@@ -258,7 +259,19 @@ static int tcp_connect(const char *host, uint16_t port, uint32_t timeout_ms,
     uint64_t t_dns = osGetTime();
     int gai = getaddrinfo(host, portstr, &hints, &res);
     if (gai != 0 || res == NULL) {
-        snprintf(err, errcap, "cannot resolve %s (gai %d)", host, gai);
+        {
+            /* Same platform limitation as the LAN path: .local is mDNS, and
+             * this console has no resolver for it. Say so rather than leaving a
+             * getaddrinfo code to interpret. */
+            size_t hn = strlen(host);
+            if (hn > 6 && strcasecmp(host + hn - 6, ".local") == 0) {
+                snprintf(err, errcap,
+                         "%s is a .local name - the 3DS cannot resolve those, use the IP",
+                         host);
+            } else {
+                snprintf(err, errcap, "cannot resolve %s (gai %d)", host, gai);
+            }
+        }
         pong_log("  DNS   %s -> FAILED (gai %d, %llums)", host, gai,
                  (unsigned long long)(osGetTime() - t_dns));
         return -1;
