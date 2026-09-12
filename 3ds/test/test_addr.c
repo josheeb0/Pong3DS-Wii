@@ -64,7 +64,15 @@ int main(void)
     /* A LAN address with a non-TLS port must not be assumed to be HTTPS. */
     ok("192.168.4.29:8788",           "192.168.4.29",      8788, 0, PONG_MODE_WEB);
     ok("http://192.168.4.29:8788",    "192.168.4.29",      8788, 0, PONG_MODE_WEB);
-    ok("192.168.4.29",                "192.168.4.29",      443,  1, PONG_MODE_WEB);
+    /* A bare private IP is the LAN server. Nobody types 192.168.x.y hoping to
+     * reach a public HTTPS deployment, and on a 3DS it may be the only thing
+     * that CAN be typed: the software keyboard greys out its symbol page, so
+     * "tcp://" and ":8787" can be genuinely unreachable. */
+    ok("192.168.4.29",                "192.168.4.29",      8787, 0, PONG_MODE_LAN);
+    ok("10.0.0.5",                    "10.0.0.5",          8787, 0, PONG_MODE_LAN);
+    ok("172.16.3.9",                  "172.16.3.9",        8787, 0, PONG_MODE_LAN);
+    /* Public IPs are not assumed to be a LAN server. */
+    ok("8.8.8.8",                     "8.8.8.8",           443,  1, PONG_MODE_WEB);
     ok("pong.wardcrew.com:8443",      "pong.wardcrew.com", 8443, 1, PONG_MODE_WEB);
     ok("http://example.com",          "example.com",       80,   0, PONG_MODE_WEB);
 
@@ -88,7 +96,7 @@ int main(void)
          * verify it would be a lie. A hostname over TLS must verify. */
         PongNetConfig c; char e[96];
         memset(&c, 0, sizeof c);
-        pong_addr_parse("192.168.4.29", &c, e, sizeof e);
+        pong_addr_parse("203.0.113.9", &c, e, sizeof e);   /* public, so WEB */
         if (c.web_verify) { printf("  FAIL bare IP should not claim verification\n"); fails++; }
         else printf("  ok   bare IP does not claim certificate verification\n");
 

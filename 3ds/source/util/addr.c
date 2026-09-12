@@ -44,6 +44,28 @@ static void trim(char *s)
     }
 }
 
+/*
+ * Is this a private IPv4 literal?
+ *
+ * Used to decide what a bare address means when no scheme was typed. It exists
+ * because of the keyboard: the 3DS software keyboard greys out its symbol page
+ * in QWERTY mode, so ':' and '/' can be genuinely impossible to enter, and
+ * "tcp://192.168.4.29:8787" is then unreachable no matter how correct it is.
+ * Digits and dots are always available.
+ */
+static bool is_private_ipv4(const char *h)
+{
+    unsigned a, b, c, d;
+    char tail;
+    if (sscanf(h, "%u.%u.%u.%u%c", &a, &b, &c, &d, &tail) != 4) return false;
+    if (a > 255 || b > 255 || c > 255 || d > 255) return false;
+    if (a == 10) return true;                          /* 10.0.0.0/8 */
+    if (a == 192 && b == 168) return true;             /* 192.168.0.0/16 */
+    if (a == 172 && b >= 16 && b <= 31) return true;   /* 172.16.0.0/12 */
+    if (a == 169 && b == 254) return true;             /* link-local */
+    return false;
+}
+
 bool pong_addr_parse(const char *input, PongNetConfig *net, char *err, size_t errcap)
 {
     char buf[160];
@@ -103,6 +125,26 @@ bool pong_addr_parse(const char *input, PongNetConfig *net, char *err, size_t er
         return false;
     }
 
+    /*
+     * A bare private IP means the LAN server, so tcp:// need not be typed.
+     *
+     * On a console this is not a guess worth agonising over: nobody enters
+     * 192.168.x.y hoping to reach a public HTTPS deployment, and the raw TCP
+     * path is dramatically better when it applies -- 60Hz against a 10Hz poll,
+     * and single-digit latency instead of a round trip through Cloudflare to a
+     * machine on the same switch.
+     *
+     * Scoped to no port, or to 8787 which is the raw TCP port itself. A private
+     * IP with some other port is left alone: 192.168.4.29:8788 is the HTTP
+     * server on the LAN, and quietly turning that into a raw TCP connection to
+     * a port that speaks HTTP would fail in a way nobody could read. An
+     * explicit scheme always wins.
+     */
+    if (!raw_tcp && !scheme_given && is_private_ipv4(host) &&
+        (port == 0 || port == 8787)) {
+        raw_tcp = true;
+    }
+
     if (raw_tcp) {
         snprintf(net->lan_host, sizeof net->lan_host, "%s", host);
         net->lan_port = port ? port : 8787;
@@ -154,12 +196,21 @@ bool pong_addr_prompt(char *buf, size_t cap, const char *initial)
 {
     static SwkbdState swkbd;
 
-    swkbdInit(&swkbd, SWKBD_TYPE_QWERTY, 2, (int)cap - 1);
+    /* NORMAL, not QWERTY: the QWERTY layout greys out its symbol page, which
+     * makes ':' and '/' impossible to type and an address like
+     * tcp://host:8787 impossible to enter. The tabbed keyboard has them. */
+    swkbdInit(&swkbd, SWKBD_TYPE_NORMAL, 2, (int)cap - 1);
     swkbdSetInitialText(&swkbd, initial ? initial : "");
-    swkbdSetHintText(&swkbd, "pong.wardcrew.com  or  192.168.4.29:8788");
+    swkbdSetHintText(&swkbd, "pong.wardcrew.com  or  192.168.4.29 for LAN");
     swkbdSetButton(&swkbd, SWKBD_BUTTON_LEFT, "Cancel", false);
     swkbdSetButton(&swkbd, SWKBD_BUTTON_RIGHT, "Connect", true);
+    /* NOTEMPTY_NOTBLANK only refuses an empty result; the two zeros are the
+     * character filter and digit cap, and must stay zero. Any filter here also
+     * greys out keyboard pages, which is the thing that made a colon
+     * untypeable in the first place. */
     swkbdSetValidation(&swkbd, SWKBD_NOTEMPTY_NOTBLANK, 0, 0);
+    /* Let the symbol page be reached by leaving every feature default; nothing
+     * about entering a host name benefits from restricting input. */
 
     SwkbdButton b = swkbdInputText(&swkbd, buf, cap);
     return b == SWKBD_BUTTON_RIGHT;
