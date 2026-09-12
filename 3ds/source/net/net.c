@@ -341,7 +341,7 @@ const char *pong_net_session(const PongNet *n) { return n ? n->session : ""; }
 
 bool pong_net_send(PongNet *n, const uint8_t *frame, size_t len)
 {
-    if (!n || n->state != PONG_LINK_OPEN) return false;
+if (!n || (n->state != PONG_LINK_OPEN && !(n->active == PONG_MODE_WEB && n->state == PONG_LINK_CONNECTING))) return false;
 
     if (n->active == PONG_MODE_LAN) {
         ssize_t w = send(n->sock, frame, len, 0);
