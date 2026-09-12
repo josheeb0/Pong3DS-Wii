@@ -51,6 +51,7 @@ static void parse_manifest(const char *text, PongUpdateInfo *out)
                 else if (!strcmp(k, "protocol")) out->remote_protocol = (uint32_t)atoi(v);
                 else if (!strcmp(k, "dsx"))      snprintf(out->dsx_path, sizeof out->dsx_path, "%s", v);
                 else if (!strcmp(k, "cia"))      snprintf(out->cia_path, sizeof out->cia_path, "%s", v);
+                else if (!strcmp(k, "release"))  snprintf(out->release_url, sizeof out->release_url, "%s", v);
             }
         }
         if (!eol) break;
