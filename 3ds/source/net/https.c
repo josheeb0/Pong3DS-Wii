@@ -1,4 +1,5 @@
 #include "https.h"
+#include "log.h"
 
 #include <3ds.h>
 #include <stdio.h>
@@ -75,6 +76,7 @@ HttpsResult https_global_init(void)
     static const char pers[] = "pong3ds";
     int rc = mbedtls_ctr_drbg_seed(&g_drbg, mbedtls_entropy_func, &g_entropy,
                                    (const unsigned char *)pers, sizeof pers - 1);
+    pong_log("entropy (PS)   : %s", rc == 0 ? "seeded ok" : "SEED FAILED");
     if (rc != 0) {
         mbedtls_ctr_drbg_free(&g_drbg);
         mbedtls_entropy_free(&g_entropy);
@@ -98,9 +100,12 @@ HttpsResult https_global_init(void)
         fclose(f);
         pem[n] = '\0';
         /* mbedtls_x509_crt_parse wants the NUL included in the length for PEM. */
-        if (mbedtls_x509_crt_parse(&g_cacert, pem, n + 1) == 0) {
-            g_have_ca = true;
-        }
+        int pr = mbedtls_x509_crt_parse(&g_cacert, pem, n + 1);
+        pong_log("CA bundle      : %zu bytes, parse rc=%d (%s)", n, pr,
+                 pr == 0 ? "all certs ok" : (pr > 0 ? "some certs REJECTED" : "FAILED"));
+        if (pr >= 0) g_have_ca = true;
+    } else {
+        pong_log("CA bundle      : romfs:/cacert.pem NOT FOUND");
     }
 
     g_inited = true;
@@ -124,12 +129,23 @@ void https_global_exit(void)
 /** Read timeout, enforced with poll() since the 3DS has no SO_RCVTIMEO. */
 #define READ_TIMEOUT_MS 8000
 
-/** Blocks until the socket is readable, or the deadline passes. */
+/**
+ * Blocks until the socket is readable, or the deadline passes.
+ *
+ * poll() proved unreliable on this console for connect completion (see
+ * wait_connected), so it is not fully trusted here either. The distinction that
+ * matters: poll returning 0 is a genuine timeout and should fail, but poll
+ * returning an ERROR means poll itself is not doing its job -- and since the
+ * socket is blocking by this point, going ahead with the read is strictly
+ * better than inventing a timeout that did not happen.
+ */
 static bool wait_readable(int fd, int timeout_ms)
 {
     struct pollfd p = { .fd = fd, .events = POLLIN, .revents = 0 };
     int r = poll(&p, 1, timeout_ms);
-    return r > 0 && (p.revents & (POLLIN | POLLHUP)) != 0;
+    if (r > 0) return (p.revents & (POLLIN | POLLHUP)) != 0;
+    if (r < 0) return true;   /* poll is broken here; let the blocking read run */
+    return false;             /* genuine timeout */
 }
 
 /* mbedTLS BIO callbacks. We supply our own rather than using net_sockets.c so
@@ -158,8 +174,53 @@ static int bio_recv(void *ctx, unsigned char *buf, size_t len)
     return n;
 }
 
-/** Blocking connect with a deadline, so a dead host does not hang the game. */
-static int tcp_connect(const char *host, uint16_t port, uint32_t timeout_ms)
+/*
+ * Waits for a non-blocking connect to complete.
+ *
+ * NOT poll(POLLOUT). That is the textbook way to do this and it is what the
+ * first version used -- and on the 3DS it silently never fires, so every
+ * connection failed after the full timeout while errno still held EINPROGRESS
+ * from the original connect(). The error message then blamed EINPROGRESS, which
+ * is not an error at all but the expected "in progress" return.
+ *
+ * Calling connect() again on the same non-blocking socket is the portable probe:
+ * it returns EALREADY or EINPROGRESS while pending, EISCONN once established,
+ * and the real error otherwise. It depends only on connect(), which the console
+ * certainly implements, since that is what started the attempt.
+ */
+static int wait_connected(int fd, const struct sockaddr *addr, socklen_t alen,
+                          uint32_t timeout_ms, char *err, size_t errcap)
+{
+    uint64_t deadline = osGetTime() + timeout_ms;
+    unsigned spins = 0;
+
+    for (;;) {
+        int rc = connect(fd, addr, alen);
+        if (rc == 0 || errno == EISCONN) return 0;
+
+        if (errno != EINPROGRESS && errno != EALREADY) {
+            snprintf(err, errcap, "connect refused (errno %d)", errno);
+            return -1;
+        }
+        if (osGetTime() >= deadline) {
+            snprintf(err, errcap, "connect timed out after %lums (last errno %d)",
+                     (unsigned long)timeout_ms, errno);
+            return -1;
+        }
+        if (++spins % 33 == 0) pong_log("  TCP   still connecting (errno %d)", errno);
+        svcSleepThread(30 * 1000 * 1000LL);   /* 30ms */
+    }
+}
+
+/**
+ * Opens a TCP connection, reporting WHICH stage failed.
+ *
+ * The stage matters: "could not resolve" and "connection refused" and "timed
+ * out" send you to completely different places, and the previous version
+ * collapsed all of them into one message plus a stale errno.
+ */
+static int tcp_connect(const char *host, uint16_t port, uint32_t timeout_ms,
+                       char *err, size_t errcap)
 {
     char portstr[8];
     snprintf(portstr, sizeof portstr, "%u", (unsigned)port);
@@ -170,43 +231,57 @@ static int tcp_connect(const char *host, uint16_t port, uint32_t timeout_ms)
     hints.ai_socktype = SOCK_STREAM;
 
     struct addrinfo *res = NULL;
-    if (getaddrinfo(host, portstr, &hints, &res) != 0 || res == NULL) return -1;
+    uint64_t t_dns = osGetTime();
+    int gai = getaddrinfo(host, portstr, &hints, &res);
+    if (gai != 0 || res == NULL) {
+        snprintf(err, errcap, "cannot resolve %s (gai %d)", host, gai);
+        pong_log("  DNS   %s -> FAILED (gai %d, %llums)", host, gai,
+                 (unsigned long long)(osGetTime() - t_dns));
+        return -1;
+    }
+    {
+        struct sockaddr_in *sa = (struct sockaddr_in *)res->ai_addr;
+        pong_log("  DNS   %s -> %s (%llums)", host, inet_ntoa(sa->sin_addr),
+                 (unsigned long long)(osGetTime() - t_dns));
+    }
 
     int fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-    if (fd < 0) { freeaddrinfo(res); return -1; }
+    if (fd < 0) {
+        snprintf(err, errcap, "socket() failed (errno %d)", errno);
+        freeaddrinfo(res);
+        return -1;
+    }
 
-    /* Non-blocking connect + poll so we control the timeout. A blocking
-     * connect to an unreachable LAN address can stall for a minute. */
     int flags = fcntl(fd, F_GETFL, 0);
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 
+    uint64_t t_conn = osGetTime();
     int rc = connect(fd, res->ai_addr, res->ai_addrlen);
-    if (rc < 0 && errno != EINPROGRESS) {
+    pong_log("  TCP   connect() -> rc=%d errno=%d%s", rc, rc == 0 ? 0 : errno,
+             rc == 0 ? " (immediate)" : (errno == EINPROGRESS ? " (EINPROGRESS, expected)" : ""));
+
+    if (rc != 0 && errno != EINPROGRESS && errno != EALREADY) {
+        snprintf(err, errcap, "connect to %s:%u failed (errno %d)", host,
+                 (unsigned)port, errno);
         close(fd);
         freeaddrinfo(res);
         return -1;
     }
 
-    if (rc < 0) {
-        struct pollfd p = { .fd = fd, .events = POLLOUT, .revents = 0 };
-        if (poll(&p, 1, (int)timeout_ms) <= 0 || !(p.revents & POLLOUT)) {
-            close(fd);
-            freeaddrinfo(res);
-            return -1;
-        }
-        int soerr = 0;
-        socklen_t slen = sizeof soerr;
-        if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &soerr, &slen) < 0 || soerr != 0) {
-            close(fd);
-            freeaddrinfo(res);
-            return -1;
-        }
+    if (rc != 0 && wait_connected(fd, res->ai_addr, res->ai_addrlen,
+                                  timeout_ms, err, errcap) != 0) {
+        pong_log("  TCP   FAILED: %s (%llums)", err,
+                 (unsigned long long)(osGetTime() - t_conn));
+        close(fd);
+        freeaddrinfo(res);
+        return -1;
     }
+    pong_log("  TCP   established in %llums", (unsigned long long)(osGetTime() - t_conn));
 
     freeaddrinfo(res);
 
-    /* Back to blocking: the request/response loop is simpler, and the 3DS
-     * network code runs on its own worker thread where blocking is fine. */
+    /* Back to blocking: the request loop is simpler, and this runs on a worker
+     * thread where blocking is fine. */
     fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
 
     /* Latency beats throughput for 20-byte input frames. */
@@ -238,10 +313,9 @@ HttpsConn *https_open(const char *host, uint16_t port, bool use_tls, bool verify
     snprintf(c->host, sizeof c->host, "%s", host);
     c->tls = use_tls;
 
-    c->fd = tcp_connect(host, port, 4000);
+    /* 8s: a 3DS on wifi reaching a host through a tunnel is not fast. */
+    c->fd = tcp_connect(host, port, 8000, g_last_open_error, sizeof g_last_open_error);
     if (c->fd < 0) {
-        snprintf(g_last_open_error, sizeof g_last_open_error,
-                 "tcp connect to %s:%u failed (errno %d)", host, (unsigned)port, errno);
         free(c);
         return NULL;
     }
@@ -298,15 +372,27 @@ HttpsConn *https_open(const char *host, uint16_t port, bool use_tls, bool verify
 
     mbedtls_ssl_set_bio(&c->ssl, &c->fd, bio_send, bio_recv, NULL);
 
+    uint64_t t_hs = osGetTime();
     while ((rc = mbedtls_ssl_handshake(&c->ssl)) != 0) {
-        if (rc != MBEDTLS_ERR_SSL_WANT_READ && rc != MBEDTLS_ERR_SSL_WANT_WRITE) goto fail;
+        if (rc != MBEDTLS_ERR_SSL_WANT_READ && rc != MBEDTLS_ERR_SSL_WANT_WRITE) {
+            char hb[160];
+            mbedtls_strerror(rc, hb, sizeof hb);
+            pong_log("  TLS   handshake FAILED after %llums: %s (-0x%04x)",
+                     (unsigned long long)(osGetTime() - t_hs), hb, (unsigned)-rc);
+            goto fail;
+        }
     }
+    pong_log("  TLS   %s / %s in %llums",
+             mbedtls_ssl_get_version(&c->ssl), mbedtls_ssl_get_ciphersuite(&c->ssl),
+             (unsigned long long)(osGetTime() - t_hs));
 
     if (verify) {
         c->verify_flags = mbedtls_ssl_get_verify_result(&c->ssl);
         /* Clock-only failures are tolerated; everything else is fatal. */
         const uint32_t clock_only =
             MBEDTLS_X509_BADCERT_EXPIRED | MBEDTLS_X509_BADCERT_FUTURE;
+        pong_log("  TLS   verify flags 0x%08lx%s", (unsigned long)c->verify_flags,
+                 c->verify_flags == 0 ? " (clean)" : "");
         uint32_t fatal = c->verify_flags & ~clock_only;
         if (fatal != 0) {
             char why[192];
@@ -448,6 +534,7 @@ HttpsResult https_request(HttpsConn *c,
 
     uint64_t t0 = osGetTime();
     memset(resp, 0, sizeof *resp);
+    pong_log("  HTTP  %s %s (body %u bytes)", method, path, (unsigned)body_len);
 
     /* ---- request ------------------------------------------------------- */
     char head[512];
@@ -609,6 +696,8 @@ HttpsResult https_request(HttpsConn *c,
 
     resp->body_len = got;
     resp->elapsed_ms = (uint32_t)(osGetTime() - t0);
+    pong_log("  HTTP  -> %d, %u bytes in %lums%s", resp->status, (unsigned)got,
+             (unsigned long)resp->elapsed_ms, chunked ? " (chunked)" : "");
 
     if (close_after) c->open = false;
     return HTTPS_OK;

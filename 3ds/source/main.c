@@ -25,6 +25,7 @@
 #include "config.h"
 #include "update.h"
 #include "addr.h"
+#include "log.h"
 
 #define SOC_ALIGN      0x1000
 #define SOC_BUFFERSIZE 0x100000
@@ -64,6 +65,13 @@ typedef struct {
 static void send_hello(App *a);
 static void send_join(App *a, uint8_t mode);
 
+/** Records a failure with its full per-transport diagnostic. */
+static void log_diag(const char *what, const char *detail)
+{
+    pong_log_section(what);
+    if (detail && detail[0]) pong_log("%s", detail);
+}
+
 /** Opens the software keyboard and applies whatever the user typed. */
 static void edit_server_address(App *a)
 {
@@ -88,10 +96,13 @@ static void edit_server_address(App *a)
 
 static void begin_connect(App *a)
 {
+    pong_log_section("connect attempt");
+    pong_log("target         : %s", a->addr);
     a->screen = SCREEN_CONNECTING;
     snprintf(a->message, sizeof a->message, "connecting...");
     a->net = pong_net_open(&a->cfg.net);
     if (a->net && pong_net_state(a->net) != PONG_LINK_FAILED) {
+        pong_log("transport      : %s", pong_net_describe(a->net));
         send_hello(a);
         send_join(a, PONG_JOIN_MODE_QUICKMATCH);
         a->screen = SCREEN_QUEUED;
@@ -179,6 +190,12 @@ static void pump_network(App *a, uint32_t now_ms)
                 pong_client_on_match_start(&a->client, &m);
                 a->screen = SCREEN_PLAY;
                 a->message[0] = '\0';
+                pong_log_section("match started");
+                pong_log("seat           : %s", m.your_side == 0 ? "LEFT" : "RIGHT");
+                pong_log("opponent       : %s (platform %u)",
+                         a->client.opp_name, (unsigned)m.opp_platform);
+                pong_log("first to       : %u%s", (unsigned)m.win_score,
+                         (m.match_flags & PONG_MATCH_FLAG_SLOW_MODE) ? "  [SLOW MODE]" : "");
             }
             break;
         }
@@ -301,9 +318,29 @@ int main(void)
     static App app;
     memset(&app, 0, sizeof app);
     pong_client_init(&app.client);
+
+    /* Opened before anything else can fail, so a failure during startup is
+     * still recorded. */
+    pong_log_open();
+    pong_log_system(PONG_BUILD_ID, PONG_PROTOCOL_VERSION);
+
     pong_config_load(&app.cfg);
     pong_addr_format(&app.cfg.net, app.addr, sizeof app.addr);
     app.screen = SCREEN_TITLE;
+
+    pong_log_section("configuration");
+    pong_log("server address : %s", app.addr);
+    pong_log("mode           : %s",
+             app.cfg.net.mode == PONG_MODE_LAN ? "lan"
+             : app.cfg.net.mode == PONG_MODE_WEB ? "web" : "auto");
+    pong_log("web            : %s:%u tls=%d verify=%d path=%s",
+             app.cfg.net.web_host, (unsigned)app.cfg.net.web_port,
+             app.cfg.net.web_tls ? 1 : 0, app.cfg.net.web_verify ? 1 : 0,
+             app.cfg.net.web_path);
+    pong_log("lan            : %s:%u subnet='%s'",
+             app.cfg.net.lan_host[0] ? app.cfg.net.lan_host : "(unset)",
+             (unsigned)app.cfg.net.lan_port, app.cfg.net.lan_subnet);
+    pong_log("player name    : %s", app.cfg.player_name);
 
     /* Sockets. The buffer must be page-aligned and becomes inaccessible to us
      * while SOC is up, so it is never freed before socExit(). */
@@ -312,8 +349,14 @@ int main(void)
     if (g_socBuf && R_SUCCEEDED(socInit(g_socBuf, SOC_BUFFERSIZE))) {
         atexit(socShutdown);
         net_ready = true;
+        pong_log_section("network");
+        pong_log("socInit        : ok (%d KB buffer)", SOC_BUFFERSIZE / 1024);
+        pong_log_network_identity();
     } else {
         snprintf(app.message, sizeof app.message, "no network (is wifi on?)");
+        pong_log_section("network");
+        pong_log("socInit        : FAILED (buffer %s) -- wifi off?",
+                 g_socBuf ? "allocated" : "ALLOCATION FAILED");
         app.screen = SCREEN_ERROR;
     }
 
@@ -391,6 +434,7 @@ int main(void)
             if (pong_net_state(app.net) == PONG_LINK_FAILED && app.screen != SCREEN_ERROR) {
                 /* The detail lives in pong_net_diag(); this is just the headline. */
                 snprintf(app.message, sizeof app.message, "%s", pong_net_error(app.net));
+                log_diag("connection failed", pong_net_diag(app.net));
                 app.screen = SCREEN_ERROR;
             }
 
@@ -435,6 +479,8 @@ int main(void)
     }
 
     if (app.net) pong_net_close(app.net);
+    pong_log_section("session end");
+    pong_log_close();
     pong_render_exit();
     C2D_Fini();
     C3D_Fini();

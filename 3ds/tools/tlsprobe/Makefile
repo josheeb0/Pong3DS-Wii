@@ -38,9 +38,9 @@ include $(DEVKITARM)/3ds_rules
 #---------------------------------------------------------------------------------
 TARGET		:=	tlsprobe
 BUILD		:=	build
-SOURCES		:=	source ../../source/net
+SOURCES		:=	source ../../source/net ../../source/util
 DATA		:=	data
-INCLUDES	:=	include ../../source/net ../../vendor/mbedtls/include
+INCLUDES	:=	include ../../source/net ../../source/util ../../vendor/mbedtls/include
 GRAPHICS	:=	gfx
 GFXBUILD	:=	$(BUILD)
 #ROMFS		:=	romfs

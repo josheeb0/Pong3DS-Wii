@@ -1,6 +1,7 @@
 #include "net.h"
 #include "https.h"
 #include "pong_proto.h"
+#include "log.h"
 
 #include <3ds.h>
 #include <stdio.h>
@@ -95,30 +96,43 @@ static int lan_connect(const char *host, uint16_t port, uint32_t timeout_ms, cha
     }
 
     int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) { snprintf(err, errcap, "socket() failed (%d)", errno); return -1; }
+    if (fd < 0) { snprintf(err, errcap, "socket() failed (errno %d)", errno); return -1; }
 
     int flags = fcntl(fd, F_GETFL, 0);
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 
     int rc = connect(fd, (struct sockaddr *)&addr, sizeof addr);
-    if (rc < 0 && errno != EINPROGRESS) {
-        snprintf(err, errcap, "connect failed (%d)", errno);
+    if (rc != 0 && errno != EINPROGRESS && errno != EALREADY) {
+        snprintf(err, errcap, "connect to %s:%u failed (errno %d)",
+                 host, (unsigned)port, errno);
         close(fd);
         return -1;
     }
-    if (rc < 0) {
-        struct pollfd p = { .fd = fd, .events = POLLOUT, .revents = 0 };
-        if (poll(&p, 1, (int)timeout_ms) <= 0 || !(p.revents & POLLOUT)) {
-            snprintf(err, errcap, "no LAN server at %s:%u", host, port);
-            close(fd);
-            return -1;
-        }
-        int soerr = 0;
-        socklen_t slen = sizeof soerr;
-        if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &soerr, &slen) < 0 || soerr != 0) {
-            snprintf(err, errcap, "LAN connect refused (%d)", soerr);
-            close(fd);
-            return -1;
+
+    /*
+     * Probe by re-calling connect() rather than waiting on poll(POLLOUT).
+     * poll never signals connect completion on this console -- see the note in
+     * https.c, where relying on it made every connection fail after the full
+     * timeout with a stale EINPROGRESS in errno.
+     */
+    if (rc != 0) {
+        uint64_t deadline = osGetTime() + timeout_ms;
+        for (;;) {
+            rc = connect(fd, (struct sockaddr *)&addr, sizeof addr);
+            if (rc == 0 || errno == EISCONN) break;
+            if (errno != EINPROGRESS && errno != EALREADY) {
+                snprintf(err, errcap, "no LAN server at %s:%u (errno %d)",
+                         host, (unsigned)port, errno);
+                close(fd);
+                return -1;
+            }
+            if (osGetTime() >= deadline) {
+                snprintf(err, errcap, "no LAN server at %s:%u (timed out)",
+                         host, (unsigned)port);
+                close(fd);
+                return -1;
+            }
+            svcSleepThread(20 * 1000 * 1000LL);   /* 20ms */
         }
     }
 
@@ -166,10 +180,12 @@ static void http_worker(void *arg)
         if (!n->https || !https_is_open(n->https)) {
             /* Reconnect, but not in a tight loop. */
             if (n->https) { https_close(n->https); n->https = NULL; }
+            pong_log("worker         : opening connection");
             n->https = https_open(n->cfg.web_host, n->cfg.web_port,
                                   n->cfg.web_tls, n->cfg.web_verify);
             if (!n->https) {
                 snprintf(n->err, sizeof n->err, "%s", https_open_error());
+                pong_log("worker         : OPEN FAILED -- %s", n->err);
                 n->state = PONG_LINK_FAILED;
                 next_at = (uint32_t)osGetTime() + 2000;
                 continue;
@@ -198,6 +214,8 @@ static void http_worker(void *arg)
             https_close(n->https);
             n->https = NULL;
             snprintf(n->err, sizeof n->err, "request failed (%d)", (int)rc);
+            pong_log("worker         : request failed rc=%d (%s)", (int)rc,
+                     bootstrapping ? "bootstrap" : "rpc");
             next_at = (uint32_t)osGetTime() + 500;
             continue;
         }
@@ -208,7 +226,9 @@ static void http_worker(void *arg)
             snprintf(n->err, sizeof n->err, "session expired");
         }
         if (resp.session[0]) {
+            bool first = (n->session[0] == '\0');
             snprintf(n->session, sizeof n->session, "%s", resp.session);
+            if (first) pong_log("worker         : session %.12s... established", n->session);
         }
 
         n->rtt_ms = resp.elapsed_ms;
@@ -254,12 +274,18 @@ PongNet *pong_net_open(const PongNetConfig *cfg)
      * connect from a phone hotspot would stall for the full timeout on every
      * launch for no possible benefit. */
     bool same_subnet = on_lan(cfg->lan_subnet, n->local_ip, sizeof n->local_ip);
+    pong_log("local IP       : %s (subnet filter '%s' -> %s)",
+             n->local_ip, cfg->lan_subnet[0] ? cfg->lan_subnet : "(none)",
+             same_subnet ? "match" : "no match");
     /* No lan_host configured means no raw-TCP port to talk to -- which is the
      * correct default, since a deployment behind 443 has no such port. */
     bool lan_configured = cfg->lan_host[0] != '\0';
     bool try_lan = lan_configured &&
                    ((cfg->mode == PONG_MODE_LAN) ||
                     (cfg->mode == PONG_MODE_AUTO && same_subnet));
+
+    pong_log("LAN path       : %s", try_lan ? "attempting" :
+             (cfg->lan_host[0] ? "skipped (wrong subnet)" : "not configured"));
 
     if (try_lan) {
         n->lan_attempted = true;
@@ -268,6 +294,8 @@ PongNet *pong_net_open(const PongNetConfig *cfg)
         n->sock = lan_connect(cfg->lan_host, cfg->lan_port, 3000,
                               n->lan_err, sizeof n->lan_err);
         if (n->sock >= 0) {
+            pong_log("LAN path       : connected to %s:%u",
+                     cfg->lan_host, (unsigned)cfg->lan_port);
             n->lan_err[0] = '\0';
             n->active = PONG_MODE_LAN;
             n->state = PONG_LINK_OPEN;
@@ -293,7 +321,12 @@ PongNet *pong_net_open(const PongNetConfig *cfg)
     }
 
     /* Internet path. The worker owns the connection from here. */
+    if (n->lan_err[0]) pong_log("LAN path       : %s", n->lan_err);
+
     n->active = PONG_MODE_WEB;
+    pong_log("WEB path       : %s://%s:%u%s verify=%d",
+             cfg->web_tls ? "https" : "http", cfg->web_host,
+             (unsigned)cfg->web_port, cfg->web_path, cfg->web_verify ? 1 : 0);
     snprintf(n->desc, sizeof n->desc, "%s %s",
              cfg->web_tls ? "HTTPS" : "HTTP", cfg->web_host);
 
