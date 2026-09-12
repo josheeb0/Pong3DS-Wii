@@ -681,7 +681,8 @@ static void draw_bottom(const PongView *view, const PongHud *hud)
             C2D_DrawRectSolid(310.0f, my - 6.0f, 0.0f, 4.0f, 12.0f, CLR_MINE);
         }
 
-        dyn("SLIDE TO MOVE", C2D_AlignCenter, 160.0f, 236.0f - 16.0f, 0.46f, CLR_FAINT);
+        dyn("SLIDE TO MOVE", 0, 10.0f, 220.0f, 0.46f, CLR_FAINT);
+        dyn("B = LEAVE", C2D_AlignRight, 310.0f, 220.0f, 0.46f, CLR_FAINT);
     } else {
         C2D_DrawText(&s_tapToStart, C2D_AlignCenter | C2D_WithColor,
                      160.0f, 92.0f, 0.5f, 0.6f, 0.6f, CLR_TEXT);

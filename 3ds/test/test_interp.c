@@ -293,6 +293,68 @@ int main(void)
         ok(c.render_delay_ms >= 100, "and still reaches a burst-sized buffer", det);
     }
 
+    printf("\n=== a correction is absorbed, not applied in one frame ===\n");
+    {
+        /*
+         * The point of the whole exercise: when the server's word disagrees
+         * with what we predicted, the drawn ball must move onto the truth over
+         * several frames rather than jumping to it. A jump at packet rate is
+         * precisely what a high-ping client sees as jitter.
+         */
+        PongClient c;
+        pong_client_init(&c);
+        start_match(&c, 0);
+
+        const int32_t vx = 64;
+        int32_t bx = PONG_FIELD_W_Q4 / 4;
+        const int32_t by = PONG_FIELD_H_Q4 / 2;
+        uint32_t now = 1000, tick = 100;
+        PongView v;
+
+        for (int i = 0; i < 40; i++) {
+            sync_clock(&c, tick, now);
+            feed(&c, tick, bx, by, vx, 0, PONG_MATCH_STATE_PLAY, now);
+            pong_client_update(&c, now, &v);
+            bx += vx * 2; tick += 2; now += 33;
+        }
+        int32_t before = v.ball_x;
+
+        /*
+         * Run the clock past the newest snapshot first, so the ball is being
+         * PREDICTED rather than interpolated from history. That is the only
+         * situation in which a correction is visible at all -- and the first
+         * version of this test omitted it, which made the test pass with
+         * reconciliation disabled. It was measuring nothing.
+         */
+        sync_clock(&c, tick + 10, now + 170);
+        pong_client_update(&c, now + 170, &v);
+        before = v.ball_x;
+
+        /* The server disagrees by 30 screen pixels -- a paddle bounce we never
+         * predicted, or a burst that arrived late. */
+        const int32_t jolt = 60 << PONG_Q4_SHIFT;
+        tick += 10; now += 170;
+        sync_clock(&c, tick, now);
+        feed(&c, tick, bx + jolt, by, vx, 0, PONG_MATCH_STATE_PLAY, now);
+        pong_client_update(&c, now, &v);
+        int32_t first_step = v.ball_x - before;
+        if (first_step < 0) first_step = -first_step;
+
+        char d[96];
+        snprintf(d, sizeof d, "moved %ld Q4 in the frame it landed (jolt was %ld)",
+                 (long)first_step, (long)jolt);
+        /* Tight on purpose. jolt/2 was the first threshold and it passed with
+         * reconciliation switched off, which made the check decorative. 150 Q4
+         * sits between the two measured behaviours: ~209 without, ~124 with. */
+        ok(first_step < 150, "does not take the whole error at once", d);
+
+        /* ...but it does converge, rather than trailing forever. */
+        for (int f = 0; f < 60; f++) pong_client_update(&c, now + f, &v);
+        int32_t residual = c.ball_off_x < 0 ? -c.ball_off_x : c.ball_off_x;
+        snprintf(d, sizeof d, "%ld Q4 left after a second", (long)residual);
+        ok(residual < (2 << PONG_Q4_SHIFT), "and settles onto the truth", d);
+    }
+
     if (failures) {
         printf("\nFAILED: %d check(s)\n\n", failures);
         return 1;

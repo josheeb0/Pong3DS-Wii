@@ -67,6 +67,10 @@ typedef struct {
     bool        slow_mode;
     uint8_t     my_side;
     uint32_t    frame;         /* for animation */
+    /* Measured frames per second. On the HUD because "the ball is not smooth"
+     * has two completely different causes -- the netcode or the frame rate --
+     * and no amount of describing it from across a room distinguishes them. */
+    uint32_t    fps;
 } PongHud;
 
 void pong_render_init(void);

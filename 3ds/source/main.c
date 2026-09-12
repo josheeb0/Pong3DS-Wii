@@ -59,6 +59,7 @@ typedef struct {
     uint32_t last_input_ms;
     uint32_t last_ping_ms;
     uint32_t frame;
+    uint32_t fps;
 
     char status[96];
     char detail[96];
@@ -483,8 +484,41 @@ int main(void)
         u32 kHeld = hidKeysHeld();
         if (kDown & KEY_START) break;
 
+        /*
+         * B leaves whatever is going on and returns to the menu.
+         *
+         * START quits the whole application, which is the wrong tool for
+         * abandoning a match -- and was the only binding there was, so leaving
+         * a game meant closing the game. The title screen has its own uses for
+         * B and A, so this is deliberately scoped to the screens where there is
+         * something to leave.
+         */
+        if ((kDown & KEY_B) && app.screen != SCREEN_TITLE) {
+            if (app.net) { pong_net_close(app.net); app.net = NULL; }
+            pong_client_reset_match(&app.client);
+            app.acc_len = 0;
+            app.message[0] = '\0';
+            app.screen = SCREEN_TITLE;
+            pong_log("left the match (B)");
+            continue;
+        }
+
         uint32_t now = (uint32_t)osGetTime();
         app.frame++;
+
+        /* Frames actually drawn in the last second. Counted here rather than
+         * derived from a delta so a single slow frame does not read as a
+         * collapse. */
+        {
+            static uint32_t fps_window = 0, fps_count = 0;
+            if (fps_window == 0) fps_window = now;
+            fps_count++;
+            if (now - fps_window >= 1000) {
+                app.fps = fps_count;
+                fps_count = 0;
+                fps_window = now;
+            }
+        }
 
         /* ---- state machine ---------------------------------------------- */
         if (app.screen == SCREEN_TITLE) {
@@ -601,13 +635,19 @@ int main(void)
 
         if (app.net) {
             snprintf(app.status, sizeof app.status, "%s", pong_net_describe(app.net));
-            snprintf(app.detail, sizeof app.detail, "RTT %lums  %luHz  +%lums  vs %s",
+            /* polls/s is the request rate, NOT the snapshot rate -- they were
+             * conflated once already while chasing a stutter, so both are shown
+             * and both are labelled. */
+            snprintf(app.detail, sizeof app.detail,
+                     "RTT %lu  %lu poll/s  %lu snap/s  buf %lu  %lu fps",
                      (unsigned long)pong_net_rtt(app.net),
                      (unsigned long)pong_net_hz(app.net),
+                     (unsigned long)app.client.snap_hz,
                      (unsigned long)app.client.render_delay_ms,
-                     app.client.opp_name[0] ? app.client.opp_name : "?");
+                     (unsigned long)app.fps);
             hud.status_line = app.status;
             hud.detail_line = app.detail;
+            hud.fps = app.fps;
         } else {
             hud.status_line = "not connected";
             hud.detail_line = app.cfg.net.lan_host;

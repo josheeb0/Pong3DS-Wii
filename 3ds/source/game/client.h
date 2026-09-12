@@ -76,6 +76,20 @@ typedef struct {
     /* --- our own paddle --- */
     uint8_t  my_side;
     int32_t  my_y;          /* Q4, locally predicted, what we draw */
+
+    /*
+     * Visual reconciliation for the ball.
+     *
+     * The ball is drawn at (authoritative + error), where the error is what was
+     * left over when the last correction landed and is worked off over a few
+     * frames. Without it, every arriving snapshot moves the ball instantly to
+     * wherever the server says it is -- correct, and visible as a jolt at the
+     * rate packets arrive, which is what a high-ping client actually sees.
+     */
+    int32_t  ball_off_x, ball_off_y;   /* Q4, decaying toward zero */
+    int32_t  vis_x, vis_y;             /* Q4, what we drew last frame */
+    uint32_t vis_basis_tick;           /* newest tick the drawn ball was built on */
+    bool     vis_valid;
     int32_t  my_server_y;   /* Q4, last authoritative */
     uint32_t my_server_tick;
     int32_t  target_y;      /* Q4, what we ask the server for */
@@ -90,6 +104,13 @@ typedef struct {
     /* --- stats for the bottom screen --- */
     uint32_t snapshots_seen;
     uint32_t render_delay_ms;
+
+    /* Snapshots actually received per second -- the number that says whether
+     * the server is batching history or sending one state per poll. Distinct
+     * from the transport's request rate, which is what the HUD used to show. */
+    uint32_t snap_hz;
+    uint32_t snap_count;
+    uint32_t snap_window_ms;
     uint32_t arrival_gap_ms;
 } PongClient;
 

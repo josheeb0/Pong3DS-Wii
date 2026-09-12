@@ -69,6 +69,15 @@ void pong_client_on_snapshot(PongClient *c, const PongSNAPSHOT *s, uint32_t now_
     }
     c->last_arrival_ms = now_ms;
 
+    /* Snapshots per second, over a one-second window. */
+    if (c->snap_window_ms == 0) c->snap_window_ms = now_ms;
+    c->snap_count++;
+    if (now_ms - c->snap_window_ms >= 1000) {
+        c->snap_hz = c->snap_count;
+        c->snap_count = 0;
+        c->snap_window_ms = now_ms;
+    }
+
     PongSnap *e = &c->ring[c->head];
     e->tick = s->tick;
     e->ball_x = s->ball_xq4;
@@ -244,6 +253,61 @@ static int32_t reflect_y(int32_t y)
     return clamp32(y, lo, hi);
 }
 
+/*
+ * How fast a correction is worked off, and when it is refused.
+ *
+ * A seventh per frame retires an error in about 200ms at 60fps: quick enough
+ * that the drawn ball is never meaningfully behind the truth, slow enough that
+ * a single packet cannot move it in one frame.
+ *
+ * Past the snap threshold the error is not smoothed at all. Half a screen of
+ * disagreement is a serve, a goal, or a paddle bounce we never predicted --
+ * gliding across that draws a ball travelling through space it was never in,
+ * which is a worse lie than the jump.
+ */
+#define RECONCILE_SHIFT   3                    /* err -= err >> 3 each frame */
+#define RECONCILE_SNAP_Q4 (120 << PONG_Q4_SHIFT)
+
+/*
+ * Absorbs the difference between where we drew the ball and where the server
+ * says it was, then works it off over the following frames.
+ *
+ * Only when the basis actually changes. Re-absorbing every frame would turn
+ * this into a low-pass filter on position and leave the ball permanently
+ * trailing the truth by a fixed distance -- smooth, and wrong.
+ */
+static void reconcile_ball(PongClient *c, PongView *out, uint32_t newest_tick)
+{
+    if (out->state != PONG_MATCH_STATE_PLAY) {
+        c->ball_off_x = c->ball_off_y = 0;
+        c->vis_valid = false;
+        c->vis_basis_tick = newest_tick;
+        return;
+    }
+
+    if (c->vis_valid && newest_tick != c->vis_basis_tick) {
+        int32_t ex = c->vis_x - out->ball_x;
+        int32_t ey = c->vis_y - out->ball_y;
+        if (ex > RECONCILE_SNAP_Q4 || ex < -RECONCILE_SNAP_Q4 ||
+            ey > RECONCILE_SNAP_Q4 || ey < -RECONCILE_SNAP_Q4) {
+            ex = ey = 0;
+        }
+        c->ball_off_x = ex;
+        c->ball_off_y = ey;
+    }
+    c->vis_basis_tick = newest_tick;
+
+    c->ball_off_x -= c->ball_off_x >> RECONCILE_SHIFT;
+    c->ball_off_y -= c->ball_off_y >> RECONCILE_SHIFT;
+
+    out->ball_x += c->ball_off_x;
+    out->ball_y += c->ball_off_y;
+
+    c->vis_x = out->ball_x;
+    c->vis_y = out->ball_y;
+    c->vis_valid = true;
+}
+
 void pong_client_update(PongClient *c, uint32_t now_ms, PongView *out)
 {
     memset(out, 0, sizeof *out);
@@ -392,4 +456,6 @@ void pong_client_update(PongClient *c, uint32_t now_ms, PongView *out)
      * which is the lag a player notices first. */
     if (c->my_side == 0) out->left_y = c->my_y;
     else out->right_y = c->my_y;
+
+    reconcile_ball(c, out, newest->tick);
 }
