@@ -211,10 +211,16 @@ export class Clock {
 
   /** Feed a PONG. `serverTick` is the server's tick at the time it replied. */
   sample(sentAtMs: number, serverTimeMs: number, serverTick: number, nowMs: number): void {
-    // Plain subtraction, NOT 32-bit unsigned arithmetic. These are Date.now()
-    // milliseconds (~1.7e12), so `nowMs >>> 0` would truncate them to 32 bits
-    // and produce a meaningless RTT.
-    const rtt = ((nowMs >>> 0) - sentAtMs) >>> 0;
+    // Plain subtraction. Do NOT "harden" this with `>>> 0` or other 32-bit
+    // integer coercion: these are Date.now() milliseconds (~1.7e12), far beyond
+    // 2^32, so truncating them produces a garbage RTT rather than guarding
+    // against one. web/test/clock.test.ts fails if this is reintroduced.
+    const rtt = nowMs - sentAtMs;
+
+    // Discard impossible samples instead of letting one poison the estimator.
+    // A negative value means the clock moved backwards; a huge one means the
+    // reply was queued so long it says nothing useful about latency.
+    if (!Number.isFinite(rtt) || rtt < 0 || rtt > 5000) return;
 
     // Where the server's tick counter stood when the reply reached us.
     const serverTickNow = serverTick + rtt / 2 / TICK_MS;
