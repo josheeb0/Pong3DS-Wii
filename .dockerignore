@@ -1,0 +1,16 @@
+# The 3DS client is built with devkitARM on a workstation, never in the image.
+3ds/
+graphics/
+docs/
+
+**/node_modules
+**/dist
+**/.src
+**/build
+.git
+.github
+*.3dsx
+*.cia
+*.elf
+*.smdh
+/Makefile
