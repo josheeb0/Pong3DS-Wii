@@ -128,8 +128,7 @@ bool pong_addr_parse(const char *input, PongNetConfig *net, char *err, size_t er
     net->web_port = port;
     net->web_tls = tls;
     net->mode = PONG_MODE_WEB;
-    /* A bare IP cannot be verified against a public CA, so do not pretend. */
-    net->web_verify = tls && !isdigit((unsigned char)host[0]);
+    net->web_verify = tls && strspn(host, "0123456789.") != strlen(host);
     return true;
 }
 
