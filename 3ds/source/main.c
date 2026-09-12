@@ -355,7 +355,16 @@ int main(void)
                     PongUpdateResult d = pong_update_download(&app.cfg.net, &up,
                                                               PONG_DSX_PATH,
                                                               app.message, sizeof app.message);
-                    (void)d;
+                    /*
+                     * The .3dsx on the SD card is now current. An installed
+                     * .cia is NOT: a title cannot install another title without
+                     * am:u access, which belongs to FBI. So point at the release
+                     * rather than implying the running build was replaced.
+                     */
+                    if (d == PONG_UPDATE_DONE && up.release_url[0]) {
+                        snprintf(app.message, sizeof app.message,
+                                 "3dsx updated. For the CIA: %s", up.release_url);
+                    }
                 } else {
                     snprintf(app.message, sizeof app.message, "%s", up.message);
                 }

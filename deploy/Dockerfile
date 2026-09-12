@@ -43,17 +43,31 @@ WORKDIR /app
 # no published build will ever equal.
 ARG BUILD_ID=0
 ARG GIT_SHA=local
+# Where a human can get this build. A .cia cannot install another .cia (that
+# needs am:u, which is FBI's job), so the updater shows this instead of
+# pretending it can update itself.
+ARG RELEASE_URL=
 
 ENV NODE_ENV=production \
     HTTP_PORT=8788 \
     TCP_PORT=8787 \
     STATIC_DIR=/app/public \
     BUILD_ID=${BUILD_ID} \
-    GIT_SHA=${GIT_SHA}
+    GIT_SHA=${GIT_SHA} \
+    RELEASE_URL=${RELEASE_URL}
 
 COPY --from=serverbuild /app/server/dist         ./dist
 COPY --from=serverbuild /app/server/node_modules ./node_modules
 COPY --from=webbuild    /app/web/dist            ./public
+
+# The 3DS build that matches this server build.
+#
+# CI places the .3dsx/.cia here before building the image, so a container always
+# serves the console build with the same BUILD_ID it reports at /api/version.
+# That is what makes the in-app updater work straight from CI: there is no
+# separate upload step to forget, and no way for the two to drift apart.
+# Empty in a local build, which simply means no update is offered.
+COPY deploy/downloads/ ./public/downloads/
 
 # 8788: HTTP + WebSocket, what CapRover's nginx routes pong.wardcrew.com to.
 # 8787: raw TCP for the 3DS on the LAN -- needs a port mapping in the app config,

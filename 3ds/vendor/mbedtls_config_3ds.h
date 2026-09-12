@@ -107,12 +107,24 @@
 #define MBEDTLS_SSL_SESSION_TICKETS
 
 /* ---- footprint --------------------------------------------------------- */
-/* 16KB is the TLS record ceiling; the 3DS has 32MB (64MB on New 3DS) of
- * userland RAM but we also hold a 1MB SOC buffer and the GPU command buffers,
- * so two 16KB TLS buffers are worth being deliberate about. Our largest
- * response is a batch of 8 snapshots -- 256 bytes -- so 4KB is generous. */
-#define MBEDTLS_SSL_IN_CONTENT_LEN  4096
-#define MBEDTLS_SSL_OUT_CONTENT_LEN 4096
+/*
+ * Full-size TLS record buffers.
+ *
+ * These were 4096, sized against the application payload -- our largest
+ * response is a batch of 8 snapshots, 256 bytes. That reasoning was wrong: the
+ * buffer also has to hold HANDSHAKE records, and the server's certificate
+ * message is far bigger than anything the game sends. Cloudflare's chain is
+ * ~2.6KB of DER before SCTs and OCSP stapling, which is uncomfortably close to
+ * 4096 and entirely outside our control -- the server decides, not us.
+ *
+ * MBEDTLS_SSL_MAX_FRAGMENT_LENGTH only lets the client ASK for smaller records;
+ * a server is free to ignore it, and Cloudflare does.
+ *
+ * 16384 is the protocol ceiling, so at this size no server can send a record we
+ * cannot receive. The cost is ~24KB of extra RAM on a console with 64MB.
+ */
+#define MBEDTLS_SSL_IN_CONTENT_LEN  16384
+#define MBEDTLS_SSL_OUT_CONTENT_LEN 16384
 
 #define MBEDTLS_ERROR_C   /* human-readable handshake failures; worth the space */
 

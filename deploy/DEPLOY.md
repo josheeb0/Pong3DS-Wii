@@ -28,7 +28,6 @@ ssh r@rdesktop.local '
   docker run -d --name pong-server --restart unless-stopped \
     --network captain-overlay-network \
     -p 8788:8788 -p 8787:8787 \
-    -v $HOME/pong3ds-downloads:/app/public/downloads:ro \
     -e PUBLIC_ORIGIN=https://pong.wardcrew.com \
     --memory 512m --cpus 1.0 \
     ghcr.io/johndoe6345789/pong3ds:latest
@@ -48,6 +47,27 @@ time. If they do not match the run you expected, the pull did not happen.
 
 Pin a specific build instead of `latest` by using its tag:
 `ghcr.io/johndoe6345789/pong3ds:sha-abc1234`.
+
+### The 3DS build travels inside the image
+
+CI builds the console client and copies it into the image before publishing, so
+`/downloads/pong3ds.3dsx` and `/downloads/pong3ds.cia` always match the
+`BUILD_ID` the server reports. Pulling a new image therefore updates what the
+in-app updater offers, with no separate upload step to forget and no way for the
+two to drift apart.
+
+There is no bind mount any more. If you want to override what is served (a local
+test build, say), mount over it explicitly:
+
+```bash
+-v $HOME/pong3ds-downloads:/app/public/downloads:ro
+```
+
+Check what a console would be offered:
+
+```bash
+curl -s https://pong.wardcrew.com/api/version
+```
 
 ## Building on the host (fallback)
 

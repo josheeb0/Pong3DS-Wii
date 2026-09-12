@@ -1,0 +1,2 @@
+# CI drops the 3DS build here before the image is built, so the server ships the
+# exact .3dsx/.cia matching its own BUILD_ID. Empty in a local build.

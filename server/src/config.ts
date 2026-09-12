@@ -40,6 +40,8 @@ export const config = {
   buildId: num('BUILD_ID', 1),
   /** Commit the image was built from; 'local' for a workstation build. */
   gitSha: str('GIT_SHA', 'local'),
+  /** Where to download this build by hand, shown by the 3DS updater. */
+  releaseUrl: str('RELEASE_URL', ''),
 } as const;
 
 export const TICK_MS = 1000 / config.tickHz;

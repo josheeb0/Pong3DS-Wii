@@ -127,7 +127,8 @@ export class HttpLayer {
       `sha=${config.gitSha}\n` +
       `protocol=${PROTOCOL_VERSION}\n` +
       `dsx=/downloads/pong3ds.3dsx\n` +
-      `cia=/downloads/pong3ds.cia\n`;
+      `cia=/downloads/pong3ds.cia\n` +
+      (config.releaseUrl ? `release=${config.releaseUrl}\n` : '');
     res.writeHead(200, {
       'Content-Type': 'text/plain; charset=utf-8',
       'Content-Length': String(Buffer.byteLength(body)),

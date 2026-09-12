@@ -156,6 +156,10 @@ On `main` it also:
 - **builds the 3DS client and publishes `.cia` + `.3dsx` to Releases**, one
   release per commit (`build-N`, marked pre-release). Version tags (`v*`) get a
   proper release instead.
+- **copies that same console build into the server image**, so
+  `/downloads/pong3ds.3dsx` always matches the `BUILD_ID` the server reports and
+  the 3DS's in-app updater works straight from CI — no separate upload step, and
+  no way for server and console builds to drift apart.
 
 The 3DS job is split across two environments because neither can do the whole
 job: the toolchain runs in the `devkitpro/devkitarm` container (installing the

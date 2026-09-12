@@ -114,7 +114,7 @@ jobs:
   # ---------------------------------------------------------------------------
   image:
     name: Publish image
-    needs: verify
+    needs: [verify, cia]
     runs-on: ubuntu-latest
     # Never publish from a pull request: the token is read-only there, and an
     # unreviewed branch should not be able to move :latest.
@@ -124,6 +124,17 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v7
+
+      # Ship the console build inside the server image, so /downloads always
+      # serves the .3dsx matching the BUILD_ID the server reports.
+      - name: Fetch the 3DS build
+        uses: actions/download-artifact@v7
+        with:
+          name: pong3ds-build-${{ github.run_number }}
+          path: deploy/downloads
+
+      - name: Confirm what will be shipped
+        run: ls -la deploy/downloads
 
       - uses: docker/setup-buildx-action@v4
 
@@ -158,6 +169,7 @@ jobs:
           build-args: |
             BUILD_ID=${{ github.run_number }}
             GIT_SHA=${{ github.sha }}
+            RELEASE_URL=${{ github.server_url }}/${{ github.repository }}/releases/tag/build-${{ github.run_number }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -216,7 +228,7 @@ jobs:
       # version or our cipher config does, so key the cache on exactly those.
       - name: Cache mbedTLS build
         id: mbedtls-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: 3ds/vendor/mbedtls
           key: mbedtls-arm11-${{ hashFiles('3ds/vendor/build-mbedtls.sh', '3ds/vendor/mbedtls_config_3ds.h') }}

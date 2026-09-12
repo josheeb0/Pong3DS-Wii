@@ -34,6 +34,7 @@ typedef struct {
     uint32_t remote_protocol;
     char     dsx_path[96];
     char     cia_path[96];
+    char     release_url[128];
     char     message[160];
 } PongUpdateInfo;
 
