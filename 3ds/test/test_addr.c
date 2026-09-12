@@ -111,6 +111,8 @@ int main(void)
              * since it is what gets saved to the SD card and reloaded. */
             PongNetConfig c2; memset(&c2, 0, sizeof c2);
             if (!pong_addr_parse(out, &c2, e, sizeof e) ||
+                strcmp(c2.web_host, c.web_host) != 0 ||
+                strcmp(c2.lan_host, c.lan_host) != 0 ||
                 c2.web_port != c.web_port || c2.web_tls != c.web_tls ||
                 c2.lan_port != c.lan_port || c2.mode != c.mode) {
                 printf("  FAIL %-26s formats to %-26s which does not round-trip\n", cases[i], out);
