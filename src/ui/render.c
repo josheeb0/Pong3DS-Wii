@@ -1,5 +1,8 @@
 #include "render.h"
 #include "pong_proto.h"
+#include "gfx.h"
+
+#define CREDIT_TEXT "made by josheeb0 on github :)"
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -21,88 +24,62 @@
  */
 #define TOPX(q) ((float)(q) * (1.0f / 32.0f))
 
-#define CLR_BG        C2D_Color32(0x07, 0x09, 0x0d, 0xFF)
-#define CLR_NET       C2D_Color32(0x1e, 0x3a, 0x4d, 0xFF)
-#define CLR_MINE      C2D_Color32(0x7e, 0xe7, 0xff, 0xFF)
-#define CLR_THEIRS    C2D_Color32(0xff, 0x9d, 0xe2, 0xFF)
-#define CLR_BALL      C2D_Color32(0xff, 0xff, 0xff, 0xFF)
-#define CLR_TEXT      C2D_Color32(0xdc, 0xe9, 0xf5, 0xFF)
+#define CLR_BG        pong_rgba(0x07, 0x09, 0x0d, 0xFF)
+#define CLR_NET       pong_rgba(0x1e, 0x3a, 0x4d, 0xFF)
+#define CLR_MINE      pong_rgba(0x7e, 0xe7, 0xff, 0xFF)
+#define CLR_THEIRS    pong_rgba(0xff, 0x9d, 0xe2, 0xFF)
+#define CLR_BALL      pong_rgba(0xff, 0xff, 0xff, 0xFF)
+#define CLR_TEXT      pong_rgba(0xdc, 0xe9, 0xf5, 0xFF)
 /* Lifted from 0x6a869b. The New 3DS XL stretches the same 320x240 panel over
  * 4.18 inches, so it is the lowest pixel density of any 3DS -- text that read
  * fine in an emulator at 3x is mush on the hardware. Secondary text needs real
  * contrast, not a polite grey. */
-#define CLR_DIM       C2D_Color32(0x95, 0xad, 0xc0, 0xFF)
-#define CLR_FAINT     C2D_Color32(0x5c, 0x74, 0x87, 0xFF)
-#define CLR_WARN      C2D_Color32(0xff, 0xc8, 0x78, 0xFF)
-#define CLR_SCORE     C2D_Color32(0x2a, 0x44, 0x5a, 0xFF)
-#define CLR_PANEL     C2D_Color32(0x0d, 0x11, 0x17, 0xFF)
-#define CLR_BTN       C2D_Color32(0x0e, 0x16, 0x1e, 0xFF)
-#define CLR_BTN_SEL   C2D_Color32(0x16, 0x2c, 0x3a, 0xFF)
-#define CLR_EDGE      C2D_Color32(0x1a, 0x2b, 0x38, 0xFF)
-#define CLR_ACCENT    C2D_Color32(0x7e, 0xe7, 0xff, 0xFF)
-#define CLR_ACCENT2   C2D_Color32(0xff, 0x9d, 0xe2, 0xFF)
-#define CLR_GOOD      C2D_Color32(0x7d, 0xff, 0xa8, 0xFF)
-#define CLR_HEADER    C2D_Color32(0x0a, 0x12, 0x19, 0xFF)
-#define CLR_TRAIL     C2D_Color32(0x16, 0x24, 0x30, 0xFF)
-#define CLR_FIELD_HI  C2D_Color32(0x0d, 0x15, 0x1f, 0xFF)
-#define CLR_FIELD_LO  C2D_Color32(0x05, 0x07, 0x0b, 0xFF)
-#define CLR_GLOW_MINE C2D_Color32(0x7e, 0xe7, 0xff, 0x30)
-#define CLR_GLOW_THRS C2D_Color32(0xff, 0x9d, 0xe2, 0x30)
-#define CLR_BALL_GLOW C2D_Color32(0xff, 0xff, 0xff, 0x28)
+#define CLR_DIM       pong_rgba(0x95, 0xad, 0xc0, 0xFF)
+#define CLR_FAINT     pong_rgba(0x5c, 0x74, 0x87, 0xFF)
+#define CLR_WARN      pong_rgba(0xff, 0xc8, 0x78, 0xFF)
+#define CLR_SCORE     pong_rgba(0x2a, 0x44, 0x5a, 0xFF)
+#define CLR_PANEL     pong_rgba(0x0d, 0x11, 0x17, 0xFF)
+#define CLR_BTN       pong_rgba(0x0e, 0x16, 0x1e, 0xFF)
+#define CLR_BTN_SEL   pong_rgba(0x16, 0x2c, 0x3a, 0xFF)
+#define CLR_EDGE      pong_rgba(0x1a, 0x2b, 0x38, 0xFF)
+#define CLR_ACCENT    pong_rgba(0x7e, 0xe7, 0xff, 0xFF)
+#define CLR_ACCENT2   pong_rgba(0xff, 0x9d, 0xe2, 0xFF)
+#define CLR_GOOD      pong_rgba(0x7d, 0xff, 0xa8, 0xFF)
+#define CLR_HEADER    pong_rgba(0x0a, 0x12, 0x19, 0xFF)
+#define CLR_TRAIL     pong_rgba(0x16, 0x24, 0x30, 0xFF)
+#define CLR_FIELD_HI  pong_rgba(0x0d, 0x15, 0x1f, 0xFF)
+#define CLR_FIELD_LO  pong_rgba(0x05, 0x07, 0x0b, 0xFF)
+#define CLR_GLOW_MINE pong_rgba(0x7e, 0xe7, 0xff, 0x30)
+#define CLR_GLOW_THRS pong_rgba(0xff, 0x9d, 0xe2, 0x30)
+#define CLR_BALL_GLOW pong_rgba(0xff, 0xff, 0xff, 0x28)
 
 /* Blends two colours. Used for the selection animation, so the highlight
  * travels rather than snapping between rows -- motion is most of what makes an
  * interface feel considered rather than assembled. */
-static u32 mix(u32 a, u32 b, float t)
+static PongColor mix(PongColor a, PongColor b, float t)
 {
     if (t < 0.0f) t = 0.0f;
     if (t > 1.0f) t = 1.0f;
-    u8 out[4];
+    uint8_t out[4];
     for (int i = 0; i < 4; i++) {
-        u8 ca = (u8)((a >> (i * 8)) & 0xFF);
-        u8 cb = (u8)((b >> (i * 8)) & 0xFF);
-        out[i] = (u8)(ca + (cb - ca) * t);
+        uint8_t ca = (uint8_t)((a >> (i * 8)) & 0xFF);
+        uint8_t cb = (uint8_t)((b >> (i * 8)) & 0xFF);
+        out[i] = (uint8_t)(ca + (cb - ca) * t);
     }
-    return (u32)out[0] | ((u32)out[1] << 8) | ((u32)out[2] << 16) | ((u32)out[3] << 24);
+    return (PongColor)out[0] | ((PongColor)out[1] << 8) | ((PongColor)out[2] << 16) | ((PongColor)out[3] << 24);
 }
 
-/* Two buffers: one for strings that never change, one cleared every frame.
- * Forgetting to clear the dynamic buffer leaks glyphs until it fills and
- * C2D_TextParse silently starts failing. */
-static C2D_TextBuf s_static;
-static C2D_TextBuf s_dynamic;
-
-static C2D_Text s_title, s_tapToStart, s_pressA, s_credit;
-
-static void mkstatic(C2D_Text *t, const char *s)
+/*
+ * Text helpers.
+ *
+ * These were a pair of citro2d text buffers with pre-parsed strings for the
+ * handful that never change. That optimisation belonged to citro2d and moved
+ * into the backend with it; four strings a frame is not worth an abstraction
+ * that every platform would have to reimplement.
+ */
+static void dyn(const char *s, int align, float x, float y, float scale, PongColor color)
 {
-    C2D_TextParse(t, s_static, s);
-    C2D_TextOptimize(t);
-}
-
-void pong_render_init(void)
-{
-    s_static = C2D_TextBufNew(512);
-    s_dynamic = C2D_TextBufNew(4096);
-    mkstatic(&s_title, "PONG MULTIPLAYER!");
-    mkstatic(&s_tapToStart, "TAP THE TOUCH SCREEN\nTO CONTINUE");
-    mkstatic(&s_pressA, "you are currently on 3ds");
-    mkstatic(&s_credit, "made by josheeb0 on github :)");
-}
-
-void pong_render_exit(void)
-{
-    C2D_TextBufDelete(s_dynamic);
-    C2D_TextBufDelete(s_static);
-}
-
-/** Parses and draws a throwaway string from the per-frame buffer. */
-static void dyn(const char *s, u32 flags, float x, float y, float scale, u32 color)
-{
-    C2D_Text t;
-    C2D_TextParse(&t, s_dynamic, s);
-    C2D_TextOptimize(&t);
-    C2D_DrawText(&t, flags | C2D_WithColor, x, y, 0.5f, scale, scale, color);
+    pong_gfx_text(x, y, scale, color, align, s);
 }
 
 /*
@@ -111,18 +88,11 @@ static void dyn(const char *s, u32 flags, float x, float y, float scale, u32 col
  * Needed because diagnostics carry things we do not control the length of --
  * hostnames, mbedTLS error strings -- and unwrapped they simply run off the
  * side of a 320px screen, which is exactly when you most need to read them.
- *
- * The wrap width is a trailing vararg and must come AFTER the colour, per
- * C2D_DrawText's contract.
  */
-static void dyn_wrap(const char *s, u32 flags, float x, float y, float scale,
-                     u32 color, float wrap_w)
+static void dyn_wrap(const char *s, int align, float x, float y, float scale,
+                     PongColor color, float wrap_w)
 {
-    C2D_Text t;
-    C2D_TextParse(&t, s_dynamic, s);
-    C2D_TextOptimize(&t);
-    C2D_DrawText(&t, flags | C2D_WithColor | C2D_WordWrap,
-                 x, y, 0.5f, scale, scale, color, wrap_w);
+    pong_gfx_text_wrap(x, y, scale, color, align, wrap_w, s);
 }
 
 /*
@@ -173,13 +143,13 @@ int pong_ui_menu_hit(float x, float y)
 }
 
 /** A filled panel with a 1px edge; the shape everything in the UI is built from. */
-static void panel(const PongRect *r, u32 fill, u32 edge)
+static void panel(const PongRect *r, PongColor fill, PongColor edge)
 {
-    C2D_DrawRectSolid(r->x, r->y, 0.0f, r->w, r->h, fill);
-    C2D_DrawRectSolid(r->x, r->y, 0.0f, r->w, 1.0f, edge);
-    C2D_DrawRectSolid(r->x, r->y + r->h - 1.0f, 0.0f, r->w, 1.0f, edge);
-    C2D_DrawRectSolid(r->x, r->y, 0.0f, 1.0f, r->h, edge);
-    C2D_DrawRectSolid(r->x + r->w - 1.0f, r->y, 0.0f, 1.0f, r->h, edge);
+    pong_gfx_rect(r->x, r->y, r->w, r->h, fill);
+    pong_gfx_rect(r->x, r->y, r->w, 1.0f, edge);
+    pong_gfx_rect(r->x, r->y + r->h - 1.0f, r->w, 1.0f, edge);
+    pong_gfx_rect(r->x, r->y, 1.0f, r->h, edge);
+    pong_gfx_rect(r->x + r->w - 1.0f, r->y, 1.0f, r->h, edge);
 }
 
 /* ------------------------------------------------------------------ menu */
@@ -198,29 +168,29 @@ static const MenuLabel MENU_LABEL[MENU_COUNT] = {
 
 /* Per-item glyphs, so the rows are distinguishable at a glance rather than
  * being five identical boxes with different words in them. */
-static void icon_for(int item, float x, float y, u32 a, u32 b)
+static void icon_for(int item, float x, float y, PongColor a, PongColor b)
 {
     switch (item) {
     case MENU_QUICK:   /* two paddles and a ball: a normal match */
-        C2D_DrawRectSolid(x,         y,        0.0f, 2.0f, 12.0f, a);
-        C2D_DrawRectSolid(x + 12.0f, y + 3.0f, 0.0f, 2.0f, 12.0f, b);
-        C2D_DrawCircleSolid(x + 7.0f, y + 7.0f, 0.0f, 2.0f, CLR_BALL);
+        pong_gfx_rect(x,         y, 2.0f, 12.0f, a);
+        pong_gfx_rect(x + 12.0f, y + 3.0f, 2.0f, 12.0f, b);
+        pong_gfx_circle(x + 7.0f, y + 7.0f, 2.0f, CLR_BALL);
         break;
     case MENU_ROOM: {  /* a keypad: something you type */
         for (int r = 0; r < 3; r++)
             for (int c = 0; c < 3; c++)
-                C2D_DrawRectSolid(x + c * 5.0f, y + r * 5.0f, 0.0f, 3.0f, 3.0f,
+                pong_gfx_rect(x + c * 5.0f, y + r * 5.0f, 3.0f, 3.0f,
                                   (r + c) % 2 ? b : a);
         break;
     }
     case MENU_BOT:     /* a blocky head: the CPU */
-        C2D_DrawRectSolid(x + 1.0f, y + 1.0f, 0.0f, 12.0f, 11.0f, a);
-        C2D_DrawRectSolid(x + 4.0f, y + 4.0f, 0.0f, 2.0f, 2.0f, CLR_BG);
-        C2D_DrawRectSolid(x + 9.0f, y + 4.0f, 0.0f, 2.0f, 2.0f, CLR_BG);
-        C2D_DrawRectSolid(x + 4.0f, y + 8.0f, 0.0f, 7.0f, 1.0f, CLR_BG);
+        pong_gfx_rect(x + 1.0f, y + 1.0f, 12.0f, 11.0f, a);
+        pong_gfx_rect(x + 4.0f, y + 4.0f, 2.0f, 2.0f, CLR_BG);
+        pong_gfx_rect(x + 9.0f, y + 4.0f, 2.0f, 2.0f, CLR_BG);
+        pong_gfx_rect(x + 4.0f, y + 8.0f, 7.0f, 1.0f, CLR_BG);
         break;
     default:
-        C2D_DrawRectSolid(x + 2.0f, y + 2.0f, 0.0f, 10.0f, 10.0f, a);
+        pong_gfx_rect(x + 2.0f, y + 2.0f, 10.0f, 10.0f, a);
         break;
     }
 }
@@ -237,9 +207,9 @@ static void draw_menu(const PongHud *hud)
     sel_y += (target->y - sel_y) * 0.35f;
 
     /* Header. */
-    C2D_DrawRectangle(0.0f, 0.0f, 0.0f, 320.0f, 32.0f,
+    pong_gfx_rect_grad(0.0f, 0.0f, 320.0f, 32.0f,
                       CLR_HEADER, CLR_HEADER, CLR_BG, CLR_BG);
-    C2D_DrawRectSolid(0.0f, 31.0f, 0.0f, 320.0f, 1.0f, CLR_ACCENT);
+    pong_gfx_rect(0.0f, 31.0f, 320.0f, 1.0f, CLR_ACCENT);
     dyn("PONG", 0, 12.0f, 3.0f, 0.72f, CLR_ACCENT);
     dyn("MULTIPLAYER", 0, 70.0f, 9.0f, 0.5f, CLR_TEXT);
 
@@ -247,10 +217,10 @@ static void draw_menu(const PongHud *hud)
     if (hud->build_id == 0) {
         /* A local build is not a release and should never be mistaken for one. */
         snprintf(b, sizeof b, "DEV");
-        dyn(b, C2D_AlignRight, 310.0f, 9.0f, 0.5f, CLR_WARN);
+        dyn(b, PONG_ALIGN_RIGHT, 310.0f, 9.0f, 0.5f, CLR_WARN);
     } else {
         snprintf(b, sizeof b, "BUILD %lu", (unsigned long)hud->build_id);
-        dyn(b, C2D_AlignRight, 310.0f, 9.0f, 0.5f, CLR_ACCENT);
+        dyn(b, PONG_ALIGN_RIGHT, 310.0f, 9.0f, 0.5f, CLR_ACCENT);
     }
 
     for (int i = 0; i < MENU_COUNT; i++) {
@@ -273,18 +243,18 @@ static void draw_menu(const PongHud *hud)
             if (sel) {
                 float cx = r->x + r->w - 20.0f, cy = r->y + r->h / 2.0f;
                 for (int k = 0; k < 6; k++) {
-                    C2D_DrawRectSolid(cx + k, cy - 6.0f + k, 0.0f, 2.0f, 2.5f, CLR_ACCENT);
-                    C2D_DrawRectSolid(cx + k, cy + 5.0f - k, 0.0f, 2.0f, 2.5f, CLR_ACCENT);
+                    pong_gfx_rect(cx + k, cy - 6.0f + k, 2.0f, 2.5f, CLR_ACCENT);
+                    pong_gfx_rect(cx + k, cy + 5.0f - k, 2.0f, 2.5f, CLR_ACCENT);
                 }
             }
         } else {
-            dyn(MENU_LABEL[i].label, C2D_AlignCenter,
+            dyn(MENU_LABEL[i].label, PONG_ALIGN_CENTER,
                 r->x + r->w / 2.0f, r->y + 7.0f, 0.5f, sel ? CLR_TEXT : CLR_DIM);
         }
     }
 
     /* The travelling highlight: a bar down the left edge of the active row. */
-    C2D_DrawRectSolid(10.0f, sel_y, 0.0f, 3.0f,
+    pong_gfx_rect(10.0f, sel_y, 3.0f,
                       PONG_MENU_RECT[hud->menu_sel].h, CLR_ACCENT);
 
     /*
@@ -299,8 +269,17 @@ static void draw_menu(const PongHud *hud)
     if (hud->message && hud->message[0]) {
         dyn_wrap(hud->message, 0, 10.0f, 214.0f, 0.44f, CLR_WARN, 300.0f);
     } else if (hud->server_addr && hud->server_addr[0]) {
-        dyn("SERVER", 0, 10.0f, 215.0f, 0.44f, CLR_FAINT);
-        dyn_wrap(hud->server_addr, 0, 62.0f, 213.0f, 0.46f, CLR_DIM, 248.0f);
+        /* The address starts after the label, measured rather than at a fixed
+         * 62px. Backends do not share a font -- the PC one is fixed-width and
+         * wider -- and a hardcoded offset that fit on the console overlapped
+         * the address everywhere else. */
+        const float lx = 10.0f;
+        float lw = 0.0f, lh = 0.0f;
+        pong_gfx_text_size("SERVER", 0.44f, &lw, &lh);
+        dyn("SERVER", PONG_ALIGN_LEFT, lx, 215.0f, 0.44f, CLR_FAINT);
+        float ax = lx + lw + 6.0f;
+        dyn_wrap(hud->server_addr, PONG_ALIGN_LEFT, ax, 213.0f, 0.46f, CLR_DIM,
+                 310.0f - ax);
     }
 }
 
@@ -342,37 +321,37 @@ static void trail_push(float x, float y)
 }
 
 /** Paddle with a soft glow behind it, so it reads as lit rather than painted. */
-static void draw_paddle(float x, float y, float w, float h, u32 body, u32 glow)
+static void draw_paddle(float x, float y, float w, float h, PongColor body, PongColor glow)
 {
-    C2D_DrawRectSolid(x - 3.0f, y - 3.0f, 0.0f, w + 6.0f, h + 6.0f, glow);
-    C2D_DrawRectSolid(x - 1.5f, y - 1.5f, 0.0f, w + 3.0f, h + 3.0f, glow);
+    pong_gfx_rect(x - 3.0f, y - 3.0f, w + 6.0f, h + 6.0f, glow);
+    pong_gfx_rect(x - 1.5f, y - 1.5f, w + 3.0f, h + 3.0f, glow);
     /* Vertical sheen: brighter in the middle, so a flat rectangle gets some
      * shape without needing a texture. */
-    C2D_DrawRectangle(x, y, 0.0f, w, h * 0.5f, mix(body, CLR_BG, 0.35f), mix(body, CLR_BG, 0.35f), body, body);
-    C2D_DrawRectangle(x, y + h * 0.5f, 0.0f, w, h * 0.5f, body, body, mix(body, CLR_BG, 0.35f), mix(body, CLR_BG, 0.35f));
+    pong_gfx_rect_grad(x, y, w, h * 0.5f, mix(body, CLR_BG, 0.35f), mix(body, CLR_BG, 0.35f), body, body);
+    pong_gfx_rect_grad(x, y + h * 0.5f, w, h * 0.5f, body, body, mix(body, CLR_BG, 0.35f), mix(body, CLR_BG, 0.35f));
 }
 
 static void draw_playfield(const PongView *view, const PongHud *hud)
 {
     /* Field: a shallow vertical gradient rather than flat black, which gives
      * the play area an edge without drawing a box around it. */
-    C2D_DrawRectangle(0.0f, 0.0f, 0.0f, 400.0f, 240.0f,
+    pong_gfx_rect_grad(0.0f, 0.0f, 400.0f, 240.0f,
                       CLR_FIELD_HI, CLR_FIELD_HI, CLR_FIELD_LO, CLR_FIELD_LO);
 
     /* Goal lines. */
-    C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 1.0f, 240.0f, mix(CLR_MINE, CLR_BG, 0.55f));
-    C2D_DrawRectSolid(399.0f, 0.0f, 0.0f, 1.0f, 240.0f, mix(CLR_THEIRS, CLR_BG, 0.55f));
+    pong_gfx_rect(0.0f, 0.0f, 1.0f, 240.0f, mix(CLR_MINE, CLR_BG, 0.55f));
+    pong_gfx_rect(399.0f, 0.0f, 1.0f, 240.0f, mix(CLR_THEIRS, CLR_BG, 0.55f));
 
     /* Centre net, fading toward the top and bottom so the eye is drawn to the
      * middle of the field where the play is. */
     for (int y = 4; y < 240; y += 15) {
         float d = fabsf((float)y - 120.0f) / 120.0f;
-        C2D_DrawRectSolid(199.0f, (float)y, 0.0f, 2.0f, 8.0f,
+        pong_gfx_rect(199.0f, (float)y, 2.0f, 8.0f,
                           mix(CLR_NET, CLR_FIELD_LO, d * 0.75f));
     }
 
     if (!view || !view->valid) {
-        dyn("CONNECTING...", C2D_AlignCenter, 200.0f, 104.0f, 0.75f, CLR_TEXT);
+        dyn("CONNECTING...", PONG_ALIGN_CENTER, 200.0f, 104.0f, 0.75f, CLR_TEXT);
         s_trail_live = false;
         return;
     }
@@ -381,9 +360,9 @@ static void draw_playfield(const PongView *view, const PongHud *hud)
      * want to read without looking away from the ball. */
     char sc[16];
     snprintf(sc, sizeof sc, "%u", view->score_l);
-    dyn(sc, C2D_AlignCenter, 150.0f, 6.0f, 1.35f, CLR_SCORE);
+    dyn(sc, PONG_ALIGN_CENTER, 150.0f, 6.0f, 1.35f, CLR_SCORE);
     snprintf(sc, sizeof sc, "%u", view->score_r);
-    dyn(sc, C2D_AlignCenter, 250.0f, 6.0f, 1.35f, CLR_SCORE);
+    dyn(sc, PONG_ALIGN_CENTER, 250.0f, 6.0f, 1.35f, CLR_SCORE);
 
     /*
      * Whose score is whose.
@@ -397,12 +376,12 @@ static void draw_playfield(const PongView *view, const PongHud *hud)
         bool left_is_mine = (hud->my_side == 0);
         const char *ln = left_is_mine ? hud->my_name : hud->opp_name;
         const char *rn = left_is_mine ? hud->opp_name : hud->my_name;
-        u32 lc = left_is_mine ? CLR_MINE : CLR_THEIRS;
-        u32 rc = left_is_mine ? CLR_THEIRS : CLR_MINE;
+        PongColor lc = left_is_mine ? CLR_MINE : CLR_THEIRS;
+        PongColor rc = left_is_mine ? CLR_THEIRS : CLR_MINE;
         /* Dimmed toward the background: this is furniture, and a bright name
          * beside a moving ball competes with the ball. */
-        if (ln && ln[0]) dyn(ln, C2D_AlignCenter, 150.0f, 48.0f, 0.46f, mix(lc, CLR_BG, 0.55f));
-        if (rn && rn[0]) dyn(rn, C2D_AlignCenter, 250.0f, 48.0f, 0.46f, mix(rc, CLR_BG, 0.55f));
+        if (ln && ln[0]) dyn(ln, PONG_ALIGN_CENTER, 150.0f, 48.0f, 0.46f, mix(lc, CLR_BG, 0.55f));
+        if (rn && rn[0]) dyn(rn, PONG_ALIGN_CENTER, 250.0f, 48.0f, 0.46f, mix(rc, CLR_BG, 0.55f));
     }
 
     const float pw = (float)PONG_PADDLE_W / 2.0f;
@@ -421,7 +400,7 @@ static void draw_playfield(const PongView *view, const PongHud *hud)
 
     /* Phase banners, on a backing strip so they stay readable over the play. */
     const char *banner = NULL;
-    u32 banner_clr = CLR_TEXT;
+    PongColor banner_clr = CLR_TEXT;
     if (view->state == PONG_MATCH_STATE_COUNTDOWN) {
         banner = "GET READY";
     } else if (view->state == PONG_MATCH_STATE_GAME_OVER) {
@@ -434,11 +413,11 @@ static void draw_playfield(const PongView *view, const PongHud *hud)
         banner_clr = CLR_WARN;
     }
     if (banner) {
-        C2D_DrawRectSolid(0.0f, 96.0f, 0.0f, 400.0f, 44.0f,
-                          C2D_Color32(0x06, 0x0a, 0x0e, 0xD8));
-        C2D_DrawRectSolid(0.0f, 96.0f, 0.0f, 400.0f, 1.0f, banner_clr);
-        C2D_DrawRectSolid(0.0f, 139.0f, 0.0f, 400.0f, 1.0f, banner_clr);
-        dyn(banner, C2D_AlignCenter, 200.0f, 104.0f, 0.95f, banner_clr);
+        pong_gfx_rect(0.0f, 96.0f, 400.0f, 44.0f,
+                          pong_rgba(0x06, 0x0a, 0x0e, 0xD8));
+        pong_gfx_rect(0.0f, 96.0f, 400.0f, 1.0f, banner_clr);
+        pong_gfx_rect(0.0f, 139.0f, 400.0f, 1.0f, banner_clr);
+        dyn(banner, PONG_ALIGN_CENTER, 200.0f, 104.0f, 0.95f, banner_clr);
     }
 
     /* Ball and its trail LAST: circles force a citro2d state change, so every
@@ -455,14 +434,13 @@ static void draw_playfield(const PongView *view, const PongHud *hud)
             int idx = (s_trail_head + i) % TRAIL_LEN;
             float age = (float)i / (float)TRAIL_LEN;    /* 0 oldest, 1 newest */
             float sz = br * (0.25f + 0.65f * age);
-            u32 c = C2D_Color32(0xff, 0xff, 0xff, (u8)(age * age * 70.0f));
-            C2D_DrawRectSolid(s_trail_x[idx] - sz, s_trail_y[idx] - sz, 0.0f,
-                              sz * 2.0f, sz * 2.0f, c);
+            PongColor c = pong_rgba(0xff, 0xff, 0xff, (uint8_t)(age * age * 70.0f));
+            pong_gfx_rect(s_trail_x[idx] - sz, s_trail_y[idx] - sz, sz * 2.0f, sz * 2.0f, c);
         }
 
-        C2D_DrawCircleSolid(bx, by, 0.0f, br * 2.2f, CLR_BALL_GLOW);
-        C2D_DrawCircleSolid(bx, by, 0.0f, br * 1.5f, CLR_BALL_GLOW);
-        C2D_DrawCircleSolid(bx, by, 0.0f, br, CLR_BALL);
+        pong_gfx_circle(bx, by, br * 2.2f, CLR_BALL_GLOW);
+        pong_gfx_circle(bx, by, br * 1.5f, CLR_BALL_GLOW);
+        pong_gfx_circle(bx, by, br, CLR_BALL);
     } else {
         s_trail_live = false;
     }
@@ -474,7 +452,7 @@ static void draw_playfield(const PongView *view, const PongHud *hud)
      * diagnostic and the match is not.
      */
     if (view->starved) {
-        C2D_DrawCircleSolid(391.0f, 9.0f, 0.0f, 3.5f, CLR_WARN);
+        pong_gfx_circle(391.0f, 9.0f, 3.5f, CLR_WARN);
     }
 }
 
@@ -496,14 +474,14 @@ static void draw_attract(const PongHud *hud)
     float ly = 120.0f + 70.0f * sinf(t * 0.021f - 0.6f);
     float ry = 120.0f + 70.0f * sinf(t * 0.021f - 1.1f);
 
-    u32 dim  = C2D_Color32(0x12, 0x20, 0x2c, 0xFF);
-    u32 dim2 = C2D_Color32(0x22, 0x18, 0x28, 0xFF);
+    PongColor dim  = pong_rgba(0x12, 0x20, 0x2c, 0xFF);
+    PongColor dim2 = pong_rgba(0x22, 0x18, 0x28, 0xFF);
 
     for (int y = 0; y < 240; y += 16) {
-        C2D_DrawRectSolid(199.0f, (float)y, 0.0f, 2.0f, 9.0f, CLR_TRAIL);
+        pong_gfx_rect(199.0f, (float)y, 2.0f, 9.0f, CLR_TRAIL);
     }
-    C2D_DrawRectSolid(24.0f,  ly - 20.0f, 0.0f, 5.0f, 40.0f, dim);
-    C2D_DrawRectSolid(371.0f, ry - 20.0f, 0.0f, 5.0f, 40.0f, dim2);
+    pong_gfx_rect(24.0f,  ly - 20.0f, 5.0f, 40.0f, dim);
+    pong_gfx_rect(371.0f, ry - 20.0f, 5.0f, 40.0f, dim2);
 
     /* A short trail behind the ball. Rectangles rather than circles: circles
      * force a citro2d state change each time, and at four of them per frame
@@ -512,10 +490,10 @@ static void draw_attract(const PongHud *hud)
         float tt = t - (float)k * 2.0f;
         float tx = 200.0f + 150.0f * sinf(tt * 0.013f);
         float ty = 120.0f + 80.0f  * sinf(tt * 0.021f);
-        C2D_DrawRectSolid(tx - 1.5f, ty - 1.5f, 0.0f, 3.0f, 3.0f,
+        pong_gfx_rect(tx - 1.5f, ty - 1.5f, 3.0f, 3.0f,
                           mix(CLR_TRAIL, CLR_BG, (float)k / 7.0f));
     }
-    C2D_DrawCircleSolid(bx, by, 0.0f, 4.0f, C2D_Color32(0x24, 0x36, 0x46, 0xFF));
+    pong_gfx_circle(bx, by, 4.0f, pong_rgba(0x24, 0x36, 0x46, 0xFF));
 }
 
 static void draw_top(const PongView *view, const PongHud *hud)
@@ -526,15 +504,15 @@ static void draw_top(const PongView *view, const PongHud *hud)
 
         /* Letterbox bands: they frame the title and, conveniently, stop the
          * demo rally competing with the text for attention. */
-        C2D_DrawRectSolid(0.0f, 60.0f, 0.0f, 400.0f, 74.0f,
-                          C2D_Color32(0x06, 0x0a, 0x0e, 0xE8));
-        C2D_DrawRectSolid(0.0f, 60.0f, 0.0f, 400.0f, 1.0f, CLR_EDGE);
-        C2D_DrawRectSolid(0.0f, 133.0f, 0.0f, 400.0f, 1.0f, CLR_EDGE);
+        pong_gfx_rect(0.0f, 60.0f, 400.0f, 74.0f,
+                          pong_rgba(0x06, 0x0a, 0x0e, 0xE8));
+        pong_gfx_rect(0.0f, 60.0f, 400.0f, 1.0f, CLR_EDGE);
+        pong_gfx_rect(0.0f, 133.0f, 400.0f, 1.0f, CLR_EDGE);
 
-        dyn("PONG", C2D_AlignCenter, 200.0f, 66.0f, 1.5f, CLR_ACCENT);
-        dyn("M U L T I P L A Y E R", C2D_AlignCenter, 200.0f, 108.0f, 0.5f, CLR_TEXT);
+        dyn("PONG", PONG_ALIGN_CENTER, 200.0f, 66.0f, 1.5f, CLR_ACCENT);
+        dyn("M U L T I P L A Y E R", PONG_ALIGN_CENTER, 200.0f, 108.0f, 0.5f, CLR_TEXT);
         dyn("cross-play with any browser",
-            C2D_AlignCenter, 200.0f, 146.0f, 0.46f, CLR_DIM);
+            PONG_ALIGN_CENTER, 200.0f, 146.0f, 0.46f, CLR_DIM);
         {
             char vb[64];
             if (hud->build_id == 0) snprintf(vb, sizeof vb, "DEV BUILD");
@@ -543,8 +521,13 @@ static void draw_top(const PongView *view, const PongHud *hud)
                 hud->build_id == 0 ? CLR_WARN : CLR_DIM);
         }
 
-        C2D_DrawText(&s_pressA, C2D_AlignRight | C2D_WithColor,
-                     392.0f, 212.0f, 0.5f, 0.46f, 0.46f, CLR_DIM);
+        {
+            /* Was the literal "you are currently on 3ds", which stopped being
+             * true the moment there was a second backend. */
+            char who[48];
+            snprintf(who, sizeof who, "you are currently on %s", pong_gfx_platform_name());
+            dyn(who, PONG_ALIGN_RIGHT, 392.0f, 212.0f, 0.46f, CLR_DIM);
+        }
 
         /*
          * Credit, top left. It sits over the attract rally rather than inside
@@ -559,27 +542,24 @@ static void draw_top(const PongView *view, const PongHud *hud)
         {
             const float cx = 8.0f, cy = 6.0f, sc = 0.46f, pad = 4.0f;
             float tw = 0.0f, th = 0.0f;
-            C2D_TextGetDimensions(&s_credit, sc, sc, &tw, &th);
-            C2D_DrawRectSolid(cx - pad, cy - pad, 0.0f,
-                              tw + pad * 2.0f, th + pad * 2.0f,
-                              C2D_Color32(0x06, 0x0a, 0x0e, 0xC0));
-            C2D_DrawText(&s_credit, C2D_WithColor,
-                         cx, cy, 0.5f, sc, sc, CLR_DIM);
+            pong_gfx_text_size(CREDIT_TEXT, sc, &tw, &th);
+            pong_gfx_rect(cx - pad, cy - pad, tw + pad * 2.0f, th + pad * 2.0f,
+                              pong_rgba(0x06, 0x0a, 0x0e, 0xC0));
+            dyn(CREDIT_TEXT, PONG_ALIGN_LEFT, cx, cy, sc, CLR_DIM);
         }
         break;
     }
 
     case SCREEN_CONNECTING:
-        C2D_DrawText(&s_title, C2D_AlignCenter | C2D_WithColor,
-                     200.0f, 60.0f, 0.5f, 0.8f, 0.8f, CLR_TEXT);
+        dyn("PONG MULTIPLAYER!", PONG_ALIGN_CENTER, 200.0f, 60.0f, 0.8f, CLR_TEXT);
         dyn(hud->message ? hud->message : "CONNECTING...",
-            C2D_AlignCenter, 200.0f, 120.0f, 0.6f, CLR_DIM);
+            PONG_ALIGN_CENTER, 200.0f, 120.0f, 0.6f, CLR_DIM);
         break;
 
     case SCREEN_QUEUED:
         draw_attract(hud);
         if (hud->room_code && hud->room_code[0]) {
-            dyn("ROOM CODE", C2D_AlignCenter, 200.0f, 48.0f, 0.46f, CLR_DIM);
+            dyn("ROOM CODE", PONG_ALIGN_CENTER, 200.0f, 48.0f, 0.46f, CLR_DIM);
 
             /* One boxed character each, so it reads as a code to be
              * transcribed rather than a word, and ambiguous glyphs are easier
@@ -593,29 +573,29 @@ static void draw_top(const PongView *view, const PongHud *hud)
                 PongRect cell = { x0 + i * (bw + gap), 74.0f, bw, 46.0f };
                 panel(&cell, CLR_BTN, CLR_ACCENT);
                 char ch[2] = { hud->room_code[i], 0 };
-                dyn(ch, C2D_AlignCenter, cell.x + bw / 2.0f, cell.y + 7.0f,
+                dyn(ch, PONG_ALIGN_CENTER, cell.x + bw / 2.0f, cell.y + 7.0f,
                     1.0f, CLR_ACCENT);
             }
 
             dyn("enter this code on the other device",
-                C2D_AlignCenter, 200.0f, 134.0f, 0.5f, CLR_TEXT);
+                PONG_ALIGN_CENTER, 200.0f, 134.0f, 0.5f, CLR_TEXT);
 
             /* Three dots cycling: says "still waiting" without a spinner that
              * would need its own animation state. */
             int phase = (hud->frame / 20) % 4;
             for (int i = 0; i < 3; i++) {
-                C2D_DrawCircleSolid(190.0f + i * 10.0f, 166.0f, 0.0f, 3.0f,
+                pong_gfx_circle(190.0f + i * 10.0f, 166.0f, 3.0f,
                                     i < phase ? CLR_ACCENT : CLR_EDGE);
             }
         } else {
-            dyn("WAITING FOR AN OPPONENT", C2D_AlignCenter, 200.0f, 98.0f, 0.7f, CLR_TEXT);
+            dyn("WAITING FOR AN OPPONENT", PONG_ALIGN_CENTER, 200.0f, 98.0f, 0.7f, CLR_TEXT);
             dyn("a CPU opponent is offered after 15s",
-                C2D_AlignCenter, 200.0f, 134.0f, 0.5f, CLR_DIM);
+                PONG_ALIGN_CENTER, 200.0f, 134.0f, 0.5f, CLR_DIM);
         }
         break;
 
     case SCREEN_ERROR:
-        dyn("CONNECTION FAILED", C2D_AlignCenter, 200.0f, 30.0f, 0.8f, CLR_WARN);
+        dyn("CONNECTION FAILED", PONG_ALIGN_CENTER, 200.0f, 30.0f, 0.8f, CLR_WARN);
         /* Every path's result, so the failure is diagnosable from the screen
          * rather than by guessing. A fallback's error alone is not enough. */
         if (hud->diag && hud->diag[0]) {
@@ -625,8 +605,8 @@ static void draw_top(const PongView *view, const PongHud *hud)
             dyn_wrap(hud->message, 0, 12.0f, 96.0f, 0.47f, CLR_DIM, 376.0f);
         }
         dyn("also written to sd:/3ds/pong3ds.log",
-            C2D_AlignCenter, 200.0f, 194.0f, 0.44f, CLR_FAINT);
-        dyn("A / TAP = back", C2D_AlignCenter, 200.0f, 214.0f, 0.5f, CLR_DIM);
+            PONG_ALIGN_CENTER, 200.0f, 194.0f, 0.44f, CLR_FAINT);
+        dyn("A / TAP = back", PONG_ALIGN_CENTER, 200.0f, 214.0f, 0.5f, CLR_DIM);
         break;
 
     case SCREEN_PLAY:
@@ -660,9 +640,9 @@ static void draw_bottom(const PongView *view, const PongHud *hud)
 
     /* Status panel. Taller than it was, because the two lines inside it are
      * bigger and cramping them was most of why they were hard to read. */
-    C2D_DrawRectangle(0.0f, 0.0f, 0.0f, 320.0f, 50.0f,
+    pong_gfx_rect_grad(0.0f, 0.0f, 320.0f, 50.0f,
                       CLR_PANEL, CLR_PANEL, CLR_BG, CLR_BG);
-    C2D_DrawRectSolid(0.0f, 49.0f, 0.0f, 320.0f, 1.0f, CLR_EDGE);
+    pong_gfx_rect(0.0f, 49.0f, 320.0f, 1.0f, CLR_EDGE);
 
     if (hud->status_line && hud->status_line[0]) {
         dyn_wrap(hud->status_line, 0, 8.0f, 4.0f, 0.5f, CLR_MINE, 244.0f);
@@ -671,7 +651,7 @@ static void draw_bottom(const PongView *view, const PongHud *hud)
         dyn_wrap(hud->detail_line, 0, 8.0f, 26.0f, 0.46f, CLR_DIM, 304.0f);
     }
     if (hud->slow_mode) {
-        dyn("SLOW", C2D_AlignRight, 312.0f, 4.0f, 0.5f, CLR_WARN);
+        dyn("SLOW", PONG_ALIGN_RIGHT, 312.0f, 4.0f, 0.5f, CLR_WARN);
     }
 
     if (hud->screen == SCREEN_PLAY) {
@@ -682,14 +662,14 @@ static void draw_bottom(const PongView *view, const PongHud *hud)
          * showing that it was doing anything.
          */
         const float ty = 56.0f, th = 176.0f;
-        C2D_DrawRectangle(6.0f, ty, 0.0f, 308.0f, th,
-                          C2D_Color32(0x0f, 0x18, 0x22, 0xFF),
-                          C2D_Color32(0x0f, 0x18, 0x22, 0xFF),
-                          C2D_Color32(0x0a, 0x10, 0x17, 0xFF),
-                          C2D_Color32(0x0a, 0x10, 0x17, 0xFF));
+        pong_gfx_rect_grad(6.0f, ty, 308.0f, th,
+                          pong_rgba(0x0f, 0x18, 0x22, 0xFF),
+                          pong_rgba(0x0f, 0x18, 0x22, 0xFF),
+                          pong_rgba(0x0a, 0x10, 0x17, 0xFF),
+                          pong_rgba(0x0a, 0x10, 0x17, 0xFF));
         for (int i = 1; i < 5; i++) {
             float y = ty + (th / 5.0f) * (float)i;
-            C2D_DrawRectSolid(6.0f, y, 0.0f, 308.0f, 1.0f, CLR_TRAIL);
+            pong_gfx_rect(6.0f, y, 308.0f, 1.0f, CLR_TRAIL);
         }
 
         /* Marker at our own paddle's height, mapped from field to strip. */
@@ -699,37 +679,32 @@ static void draw_bottom(const PongView *view, const PongHud *hud)
             if (f < 0.0f) f = 0.0f;
             if (f > 1.0f) f = 1.0f;
             float my = ty + f * th;
-            C2D_DrawRectSolid(6.0f, my - 9.0f, 0.0f, 308.0f, 18.0f,
-                              C2D_Color32(0x7e, 0xe7, 0xff, 0x22));
-            C2D_DrawRectSolid(6.0f, my - 1.5f, 0.0f, 308.0f, 3.0f, CLR_MINE);
-            C2D_DrawRectSolid(6.0f, my - 6.0f, 0.0f, 4.0f, 12.0f, CLR_MINE);
-            C2D_DrawRectSolid(310.0f, my - 6.0f, 0.0f, 4.0f, 12.0f, CLR_MINE);
+            pong_gfx_rect(6.0f, my - 9.0f, 308.0f, 18.0f,
+                              pong_rgba(0x7e, 0xe7, 0xff, 0x22));
+            pong_gfx_rect(6.0f, my - 1.5f, 308.0f, 3.0f, CLR_MINE);
+            pong_gfx_rect(6.0f, my - 6.0f, 4.0f, 12.0f, CLR_MINE);
+            pong_gfx_rect(310.0f, my - 6.0f, 4.0f, 12.0f, CLR_MINE);
         }
 
         dyn("SLIDE TO MOVE", 0, 10.0f, 220.0f, 0.46f, CLR_FAINT);
-        dyn("B = LEAVE", C2D_AlignRight, 310.0f, 220.0f, 0.46f, CLR_FAINT);
+        dyn("B = LEAVE", PONG_ALIGN_RIGHT, 310.0f, 220.0f, 0.46f, CLR_FAINT);
     } else {
-        C2D_DrawText(&s_tapToStart, C2D_AlignCenter | C2D_WithColor,
-                     160.0f, 92.0f, 0.5f, 0.6f, 0.6f, CLR_TEXT);
+        dyn("TAP THE TOUCH SCREEN\nTO CONTINUE", PONG_ALIGN_CENTER,
+            160.0f, 92.0f, 0.6f, CLR_TEXT);
         if (hud->message && hud->message[0] && hud->screen != SCREEN_ERROR) {
-            dyn_wrap(hud->message, C2D_AlignCenter, 160.0f, 186.0f, 0.48f,
+            dyn_wrap(hud->message, PONG_ALIGN_CENTER, 160.0f, 186.0f, 0.48f,
                      CLR_DIM, 300.0f);
         }
     }
 }
 
-void pong_render_frame(C3D_RenderTarget *top, C3D_RenderTarget *bot,
-                       const PongView *view, const PongHud *hud)
+void pong_render_frame(const PongView *view, const PongHud *hud)
 {
-    /* Both screens cleared and drawn inside ONE frame. C2D_SceneBegin handles
-     * the per-screen projection switch. */
-    C2D_TextBufClear(s_dynamic);
-
-    C2D_TargetClear(top, CLR_BG);
-    C2D_SceneBegin(top);
+    /* Both surfaces inside one frame. Which physical screens, windows or
+     * viewports those become is the backend's problem, not this file's. */
+    pong_gfx_surface_begin(PONG_SURFACE_TOP, CLR_BG);
     draw_top(view, hud);
 
-    C2D_TargetClear(bot, CLR_BG);
-    C2D_SceneBegin(bot);
+    pong_gfx_surface_begin(PONG_SURFACE_BOTTOM, CLR_BG);
     draw_bottom(view, hud);
 }

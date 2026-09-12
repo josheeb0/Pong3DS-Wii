@@ -18,6 +18,50 @@ HTTP long-poll, so it works even where WebSockets don't survive the proxy.
                     Room → 60Hz integer simulation
 ```
 
+## What it looks like
+
+The same `src/ui/render.c` draws all three. Each platform supplies a renderer
+backend behind `src/gfx/gfx.h` and nothing else changes.
+
+### PC — SDL3, its own interface
+
+The desktop build is **not the handheld one in a window**. One canvas, a
+full-size playfield, a scoreboard above it and a proper menu -- the same
+reasoning that gives the browser client its own interface. A window is not a
+3DS, and making either pretend to be the other makes both worse.
+
+![PC menu](docs/previews/pc_menu.png)
+
+![PC in a match](docs/previews/pc_play.png)
+
+Keyboard, mouse, or a gamepad -- SDL3 knows the DualSense natively, so a PS5
+controller is plug-and-play and the on-screen hints switch to its button names
+when one is attached. Both shots above were captured from the running build;
+the second is a demo state, and the connected screen below is against a real
+server.
+
+### PS Vita — 960x544  *(layout preview; build not yet compiled)*
+
+![Vita](docs/previews/vita.png)
+
+### Nintendo 3DS — 400x240 over 320x240  *(handheld interface)*
+
+| in a match | the menu |
+|---|---|
+| ![3DS](docs/previews/3ds.png) | ![3DS menu](docs/previews/3ds_menu.png) |
+
+**How these were made, and what they are not.** The PC shots are real captures
+from the SDL3 build. The Vita and 3DS images are the *same build* rendering at
+those layouts — honest about arrangement, scale and every pixel of the
+interface, because the layout rule is shared between backends and the Vita
+backend uses the same embedded font.
+
+The one thing they do not show is the console's **typeface**: the 3DS backend
+draws through citro2d with the system font, which is proportional, where the PC
+and Vita backends use an embedded 8x8 bitmap face. So the 3DS images are a
+faithful preview of layout and a stand-in for text. Photographs of real hardware
+would be better and are welcome.
+
 ## Quick start
 
 ```bash
@@ -26,6 +70,60 @@ make dev
 
 Server on `:8788` (HTTP + WebSocket) and `:8787` (raw TCP for the 3DS), web client
 on `:5173`. Open two tabs and play. `make test` runs everything.
+
+## Building for each platform
+
+```bash
+make 3ds          # 3ds/pong3ds.3dsx   (devkitARM)
+make -C pc        # pc/pong-pc         (SDL3)
+make -C vita      # vita/pong-vita.vpk (VitaSDK)
+```
+
+`make -C pc run` opens a window.
+
+| flag | |
+|---|---|
+| `--size WxH` | window size |
+| `--autoplay` | join a quick match straight away |
+| `--demo` | fill in a match state without a server, for screenshots |
+| `--frames N --shot f.bmp` | render N frames, save one, exit |
+
+The PC build reads `pong-pc.cfg` beside the binary (`server`, `port`, `name`),
+and SERVER and NAME are editable in the menu. **It speaks raw TCP only**, so it
+plays against a server on the LAN and not through the Cloudflare tunnel -- to
+play over the internet from a desktop, open the web client, which already does
+that properly.
+
+**Honest status.** The 3DS and PC builds are compiled and run here; the PC one
+was rendered and inspected. **The Vita build has never been compiled** -- there
+was no VitaSDK on the machine it was written on, so `src/gfx/vita/gfx_vita.c`
+and `vita/Makefile` are careful reading of the toolchain rather than anything
+that has executed. Expect to fix something on the first build.
+
+## The renderer seam
+
+`src/gfx/gfx.h` is the whole platform surface: rectangles, a gradient, a circle,
+text, and two logical screens. That is genuinely all Pong needs, and a small
+seam is one that three backends can agree on.
+
+| | |
+|---|---|
+| `src/gfx/3ds/` | citro2d. Nearly a direct mapping -- `PongColor` is the same packing as `C2D_Color32`, so colours are a cast |
+| `src/gfx/sdl3/` | SDL3. Gradients via `RenderGeometry`, the ball as a triangle fan |
+| `src/gfx/vita/` | vita2d. Gradients banded into strips, since it has no per-vertex colour |
+
+**Two surfaces, always.** The interface is laid out in the 3DS's 400x240 and
+320x240 and every backend presents both, deciding for itself where they go. The
+console maps them to its two panels; the Vita and a PC window measure side-by-side
+against stacked and pick whichever makes the playfield larger. The alternative --
+one canvas with per-platform layout -- would put a branch for every target into
+the UI code, which is the thing the seam exists to avoid.
+
+**Text is an embedded 8x8 bitmap font** on SDL3 and the Vita rather than
+SDL_ttf. It has to look the same in three places, and two font rasterisers do
+not agree about metrics: a panel sized on one would clip on another. The 3DS
+keeps its system font, which is why its text is proportional and the others'
+is not.
 
 ## Layout
 
@@ -38,6 +136,9 @@ on `:5173`. Open two tabs and play. `make test` runs everything.
 | `server/src/net/` | Sessions, dispatch, and the four transports |
 | `web/src/net/ladder.ts` | Transport negotiation |
 | `web/src/game/` | Interpolation, prediction, canvas renderer |
+| `src/gfx/` | The renderer seam and its three backends |
+| `src/ui/` | The interface, drawn through that seam by every platform |
+| `pc/`, `vita/` | Per-platform front ends: window, input, clock |
 | `3ds/source/` | The console client |
 | `3ds/vendor/` | mbedTLS and the CIA tooling, fetched by script |
 

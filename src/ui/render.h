@@ -1,5 +1,5 @@
 /*
- * citro2d rendering for both screens.
+ * The interface, drawn through the platform-agnostic renderer seam in gfx.h.
  *
  * Top    (400x240): the playfield, at exactly half field coordinates. The
  *                   800x480 field was chosen for precisely this -- the mapping
@@ -11,9 +11,10 @@
 #ifndef PONG_RENDER_H
 #define PONG_RENDER_H
 
-#include <citro2d.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include "client.h"
+#include "gfx.h"
 
 typedef struct { float x, y, w, h; } PongRect;
 
@@ -78,11 +79,7 @@ typedef struct {
     uint32_t    fps;
 } PongHud;
 
-void pong_render_init(void);
-void pong_render_exit(void);
-
-/** Draws one frame to both screens. Call between C3D_FrameBegin/End. */
-void pong_render_frame(C3D_RenderTarget *top, C3D_RenderTarget *bot,
-                       const PongView *view, const PongHud *hud);
+/** Draws one frame to both surfaces. Call between gfx frame begin/end. */
+void pong_render_frame(const PongView *view, const PongHud *hud);
 
 #endif /* PONG_RENDER_H */

@@ -22,6 +22,7 @@
 #include "client.h"
 #include "net.h"
 #include "render.h"
+#include "gfx.h"
 #include "config.h"
 #include "update.h"
 #include "addr.h"
@@ -463,14 +464,9 @@ static void send_input(App *a, uint32_t now_ms)
 int main(void)
 {
     romfsInit();
-    gfxInitDefault();
-    C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);
-    C2D_Init(C2D_DEFAULT_MAX_OBJECTS);
-    C2D_Prepare();
-    pong_render_init();
-
-    C3D_RenderTarget *top = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
-    C3D_RenderTarget *bot = C2D_CreateScreenTarget(GFX_BOTTOM, GFX_LEFT);
+    /* Screens, targets and text buffers all belong to the backend now; this
+     * file no longer knows citro2d exists. */
+    pong_gfx_init("Pong3DS");
 
     static App app;
     memset(&app, 0, sizeof app);
@@ -704,18 +700,15 @@ int main(void)
         }
 
         /* ---- draw --------------------------------------------------------- */
-        C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
-        pong_render_frame(top, bot, &view, &hud);
-        C3D_FrameEnd(0);
+        pong_gfx_frame_begin();
+        pong_render_frame(&view, &hud);
+        pong_gfx_frame_end();
     }
 
     if (app.net) pong_net_close(app.net);
     pong_log_section("session end");
     pong_log_close();
-    pong_render_exit();
-    C2D_Fini();
-    C3D_Fini();
-    gfxExit();
+    pong_gfx_exit();
     romfsExit();
     return 0;
 }

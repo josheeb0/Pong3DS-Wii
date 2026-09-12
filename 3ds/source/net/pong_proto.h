@@ -65,6 +65,8 @@ typedef enum {
     PONG_PLATFORM_WEB = 1,
     PONG_PLATFORM_N3DS = 2,
     PONG_PLATFORM_WII = 3,
+    PONG_PLATFORM_PC = 4,
+    PONG_PLATFORM_VITA = 5,
 } PongPlatform;
 
 typedef enum {
