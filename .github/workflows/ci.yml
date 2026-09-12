@@ -228,7 +228,7 @@ jobs:
       # version or our cipher config does, so key the cache on exactly those.
       - name: Cache mbedTLS build
         id: mbedtls-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: 3ds/vendor/mbedtls
           key: mbedtls-arm11-${{ hashFiles('3ds/vendor/build-mbedtls.sh', '3ds/vendor/mbedtls_config_3ds.h') }}
