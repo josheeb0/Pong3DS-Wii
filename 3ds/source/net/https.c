@@ -568,7 +568,20 @@ HttpsResult https_request(HttpsConn *c,
         "%s %s HTTP/1.1\r\n"
         "Host: %s\r\n"
         "User-Agent: Pong3DS/1.0\r\n"
-        "Accept: application/octet-stream\r\n"
+        /*
+         * Accept anything, rather than naming octet-stream.
+         *
+         * The specific type was chosen for downloading a .3dsx and looked
+         * harmless, but GitHub's REST API treats Accept as a media-type
+         * selector and answers a JSON endpoint asked for octet-stream with
+         * 415 Unsupported Media Type. So the update CHECK was refused by
+         * content negotiation, while the download it was checking for would
+         * have been served happily.
+         *
+         * Verified against all three: the releases API, a release asset
+         * through its redirect, and the game server's /api/version.
+         */
+        "Accept: */*\r\n"
         "Connection: keep-alive\r\n"
         "Content-Type: application/octet-stream\r\n"
         "Content-Length: %u\r\n",
