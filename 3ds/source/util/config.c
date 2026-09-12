@@ -99,7 +99,6 @@ void pong_config_remember_mode(const PongConfig *cfg, PongNetMode mode)
     if (!f) return;
     fprintf(f, "# written by Pong3DS -- edit freely, these override romfs defaults\n");
     fprintf(f, "lan_host=%s\n", cfg->net.lan_host);
-    fprintf(f, "web_verify=%d\n", cfg->net.web_verify ? 1 : 0);
     fprintf(f, "lan_port=%u\n", (unsigned)cfg->net.lan_port);
     fprintf(f, "lan_subnet=%s\n", cfg->net.lan_subnet);
     fprintf(f, "web_host=%s\n", cfg->net.web_host);
