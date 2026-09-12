@@ -157,10 +157,11 @@ On `main` it also:
   release per commit (`build-N`, marked pre-release). Version tags (`v*`) get a
   proper release instead.
 
-The 3DS job installs devkitPro as a step rather than using the
-`devkitpro/devkitarm` container: that image is Debian bookworm (glibc 2.36) and
-`makerom` is built against 2.38, so packaging a `.cia` inside it fails at the
-last step. The runner has 2.39, so everything works in one place. mbedTLS is
+The 3DS job is split across two environments because neither can do the whole
+job: the toolchain runs in the `devkitpro/devkitarm` container (installing the
+SDK on the runner is not an option — `apt.devkitpro.org` answers 403 to
+everything), while `.cia` packaging runs on the runner itself (that container is
+Debian bookworm, glibc 2.36, and `makerom` links against 2.38). mbedTLS is
 cached on its version and cipher config, since it is the slow part.
 
 See `deploy/DEPLOY.md`. Short version: pull the image, publish 8788 (HTTP) and

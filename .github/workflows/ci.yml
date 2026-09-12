@@ -189,10 +189,19 @@ jobs:
   # ---------------------------------------------------------------------------
   # Build the 3DS client and publish it to Releases.
   #
-  # Installs devkitPro as a step rather than using the devkitpro/devkitarm
-  # container: that image is Debian bookworm (glibc 2.36) and makerom is built
-  # against 2.38, so packaging a .cia inside it fails at the last step. The
-  # runner has glibc 2.39, so everything works in one place.
+  # Split deliberately across two environments, because neither can do the whole
+  # job:
+  #
+  #   - The toolchain runs in devkitpro/devkitarm. Installing the SDK on the
+  #     runner instead would be simpler, but apt.devkitpro.org answers 403 to
+  #     everything (bot protection), so that route is unavailable from CI.
+  #
+  #   - Packaging runs on the RUNNER, not in that container. The image is Debian
+  #     bookworm (glibc 2.36) and makerom links against 2.38, so building the
+  #     .cia inside it dies with GLIBC_2.38 at the very last step. The runner has
+  #     2.39.
+  #
+  # Both halves were reproduced locally in Docker before being written here.
   # ---------------------------------------------------------------------------
   cia:
     name: Build 3DS (.3dsx + .cia)
@@ -203,17 +212,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install devkitPro (devkitARM + libctru + citro2d)
-        run: |
-          set -euo pipefail
-          wget -qO /tmp/install-devkitpro-pacman https://apt.devkitpro.org/install-devkitpro-pacman
-          chmod +x /tmp/install-devkitpro-pacman
-          sudo /tmp/install-devkitpro-pacman
-          sudo dkp-pacman -S --noconfirm --needed 3ds-dev
-          echo "DEVKITPRO=/opt/devkitpro"          >> "$GITHUB_ENV"
-          echo "DEVKITARM=/opt/devkitpro/devkitARM" >> "$GITHUB_ENV"
-          echo "/opt/devkitpro/tools/bin"          >> "$GITHUB_PATH"
-
       # mbedTLS is the slow part (a few minutes) and changes only when its
       # version or our cipher config does, so key the cache on exactly those.
       - name: Cache mbedTLS build
@@ -221,17 +219,21 @@ jobs:
         uses: actions/cache@v4
         with:
           path: 3ds/vendor/mbedtls
-          key: mbedtls-${{ runner.os }}-${{ hashFiles('3ds/vendor/build-mbedtls.sh', '3ds/vendor/mbedtls_config_3ds.h') }}
+          key: mbedtls-arm11-${{ hashFiles('3ds/vendor/build-mbedtls.sh', '3ds/vendor/mbedtls_config_3ds.h') }}
 
-      - name: Build mbedTLS for ARM11
-        if: steps.mbedtls-cache.outputs.cache-hit != 'true'
-        run: ./3ds/vendor/build-mbedtls.sh
+      # Runs as the runner's own uid so the artifacts are not left root-owned
+      # for the packaging steps that follow. devkitPro's paths come from the
+      # image's ENV, so no login shell is needed.
+      - name: Build .3dsx (devkitPro container)
+        run: |
+          docker run --rm \
+            -v "$PWD":/work -w /work \
+            -u "$(id -u):$(id -g)" -e HOME=/tmp \
+            devkitpro/devkitarm:latest \
+            bash -c 'set -e; ./3ds/vendor/build-mbedtls.sh; make -C 3ds'
 
       - name: Fetch CIA packaging tools
         run: ./3ds/vendor/fetch-tools.sh
-
-      - name: Build .3dsx
-        run: make -C 3ds
 
       - name: Build .cia
         run: ./3ds/build-cia.sh 3ds/pong3ds.elf 3ds/pong3ds.cia
