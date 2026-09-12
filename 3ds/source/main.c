@@ -142,8 +142,14 @@ static void edit_server_address(App *a)
     /* Say which path was configured. A bare private IP is taken to mean the LAN
      * fast path, and reinterpreting what someone typed without telling them is
      * how a setting ends up mysteriously not doing what they expected. */
-    if (a->cfg.net.lan_host[0]) {
-        snprintf(a->message, sizeof a->message, "LAN %s:%u - 60Hz direct",
+    if (a->cfg.net.lan_host[0] && a->cfg.net.mode != PONG_MODE_LAN) {
+        /* Says both halves on purpose: the whole worry with setting a LAN
+         * address on a handheld is whether it still works away from home. */
+        snprintf(a->message, sizeof a->message, "LAN %s at 60Hz, %s elsewhere",
+                 a->cfg.net.lan_host,
+                 a->cfg.net.web_host[0] ? a->cfg.net.web_host : "no web host set");
+    } else if (a->cfg.net.lan_host[0]) {
+        snprintf(a->message, sizeof a->message, "LAN only: %s:%u",
                  a->cfg.net.lan_host, (unsigned)a->cfg.net.lan_port);
     } else {
         snprintf(a->message, sizeof a->message, "saved: %s", a->addr);

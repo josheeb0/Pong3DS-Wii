@@ -9,6 +9,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdbool.h>
 #include "../source/util/addr.h"
 
 static int fails = 0;
@@ -25,8 +26,12 @@ static void ok(const char *in, const char *host, int port, int tls, int mode)
         return;
     }
 
-    const char *got_host = (mode == PONG_MODE_LAN) ? c.lan_host : c.web_host;
-    int got_port = (mode == PONG_MODE_LAN) ? c.lan_port : c.web_port;
+    /* Which pair of fields was filled in is decided by whether a LAN host was
+     * set, not by the mode: a bare private IP configures the LAN host while
+     * staying in AUTO so the web path remains available away from home. */
+    bool is_lan = (c.lan_host[0] != '\0');
+    const char *got_host = is_lan ? c.lan_host : c.web_host;
+    int got_port = is_lan ? c.lan_port : c.web_port;
 
     if (strcmp(got_host, host) != 0 || got_port != port ||
         (int)c.web_tls != tls || (int)c.mode != mode) {
@@ -68,9 +73,9 @@ int main(void)
      * reach a public HTTPS deployment, and on a 3DS it may be the only thing
      * that CAN be typed: the software keyboard greys out its symbol page, so
      * "tcp://" and ":8787" can be genuinely unreachable. */
-    ok("192.168.4.29",                "192.168.4.29",      8787, 0, PONG_MODE_LAN);
-    ok("10.0.0.5",                    "10.0.0.5",          8787, 0, PONG_MODE_LAN);
-    ok("172.16.3.9",                  "172.16.3.9",        8787, 0, PONG_MODE_LAN);
+    ok("192.168.4.29",                "192.168.4.29",      8787, 0, PONG_MODE_AUTO);
+    ok("10.0.0.5",                    "10.0.0.5",          8787, 0, PONG_MODE_AUTO);
+    ok("172.16.3.9",                  "172.16.3.9",        8787, 0, PONG_MODE_AUTO);
     /* Public IPs are not assumed to be a LAN server. */
     ok("8.8.8.8",                     "8.8.8.8",           443,  1, PONG_MODE_WEB);
     ok("pong.wardcrew.com:8443",      "pong.wardcrew.com", 8443, 1, PONG_MODE_WEB);
@@ -79,6 +84,46 @@ int main(void)
     /* The raw TCP fast path, reachable without editing a config file. */
     ok("tcp://192.168.4.29:8787",     "192.168.4.29",      8787, 0, PONG_MODE_LAN);
     ok("tcp://192.168.4.29",          "192.168.4.29",      8787, 0, PONG_MODE_LAN);
+
+    printf("\n=== a LAN address must not strand the console ===\n");
+    {
+        /* PONG_MODE_LAN means LAN or nothing. Reaching it by typing an IP would
+         * make the console work at home and refuse to connect anywhere else,
+         * with nothing on screen to explain why. */
+        PongNetConfig c; char e[96];
+        memset(&c, 0, sizeof c);
+        snprintf(c.web_host, sizeof c.web_host, "pong.wardcrew.com");
+        c.web_port = 443; c.web_tls = true;
+
+        if (!pong_addr_parse("192.168.4.29", &c, e, sizeof e)) {
+            printf("  FAIL bare LAN IP rejected: %s\n", e); fails++;
+        } else if (c.mode == PONG_MODE_LAN) {
+            printf("  FAIL bare LAN IP set LAN-only mode, no web fallback\n"); fails++;
+        } else if (strcmp(c.web_host, "pong.wardcrew.com") != 0 || c.web_port != 443) {
+            printf("  FAIL setting a LAN host destroyed the web host\n"); fails++;
+        } else {
+            printf("  ok   keeps the web host as a fallback (%s:%u)\n",
+                   c.web_host, (unsigned)c.web_port);
+        }
+
+        /* And the subnet is derived, so being away skips the LAN attempt
+         * instantly instead of stalling for the connect timeout. */
+        if (strcmp(c.lan_subnet, "192.168.4.") != 0) {
+            printf("  FAIL subnet not derived (got '%s', want '192.168.4.')\n", c.lan_subnet);
+            fails++;
+        } else {
+            printf("  ok   derives subnet '%s' so a foreign network skips LAN\n", c.lan_subnet);
+        }
+
+        /* An explicit scheme is still taken literally. */
+        memset(&c, 0, sizeof c);
+        pong_addr_parse("tcp://192.168.4.29", &c, e, sizeof e);
+        if (c.mode != PONG_MODE_LAN) {
+            printf("  FAIL explicit tcp:// should stay LAN-only\n"); fails++;
+        } else {
+            printf("  ok   explicit tcp:// is still LAN-only\n");
+        }
+    }
 
     printf("\n=== rejections ===\n");
     rejected("",                      "empty");

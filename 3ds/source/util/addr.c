@@ -66,6 +66,24 @@ static bool is_private_ipv4(const char *h)
     return false;
 }
 
+/*
+ * "192.168.4.29" -> "192.168.4." -- the /24 the address sits in.
+ *
+ * Used as a cheap "are we plausibly on that network" test. Not a real netmask:
+ * the console's actual mask is available, but a prefix match is enough to
+ * decide whether attempting a LAN connect is worth three seconds, and being
+ * wrong in either direction costs only that.
+ */
+static void derive_subnet(const char *ip, char *out, size_t cap)
+{
+    const char *last = strrchr(ip, '.');
+    if (!last) { out[0] = '\0'; return; }
+    size_t n = (size_t)(last - ip) + 1;      /* include the dot */
+    if (n >= cap) { out[0] = '\0'; return; }
+    memcpy(out, ip, n);
+    out[n] = '\0';
+}
+
 bool pong_addr_parse(const char *input, PongNetConfig *net, char *err, size_t errcap)
 {
     char buf[160];
@@ -142,10 +160,30 @@ bool pong_addr_parse(const char *input, PongNetConfig *net, char *err, size_t er
      */
     if (!raw_tcp && !scheme_given && is_private_ipv4(host) &&
         (port == 0 || port == 8787)) {
-        raw_tcp = true;
+        /*
+         * AUTO, not LAN: this must not strand the console away from home.
+         *
+         * PONG_MODE_LAN means LAN or nothing -- pong_net_open returns FAILED
+         * rather than falling back. That is a reasonable thing to ask for
+         * explicitly and a terrible thing to get by typing an IP address, since
+         * the console would then work at home and refuse to connect anywhere
+         * else, with nothing on screen to explain why.
+         *
+         * The subnet is derived from the address so the LAN attempt is skipped
+         * outright when we are somewhere else, rather than stalling for the
+         * full connect timeout on every launch to discover the obvious.
+         */
+        snprintf(net->lan_host, sizeof net->lan_host, "%s", host);
+        net->lan_port = port ? port : 8787;
+        derive_subnet(host, net->lan_subnet, sizeof net->lan_subnet);
+        net->mode = PONG_MODE_AUTO;
+        return true;
     }
 
     if (raw_tcp) {
+        /* An explicit tcp:// is taken literally: LAN or nothing. Someone who
+         * types a scheme is being deliberate, and it stays available as the way
+         * to test the raw path without the web path masking a failure. */
         snprintf(net->lan_host, sizeof net->lan_host, "%s", host);
         net->lan_port = port ? port : 8787;
         net->lan_subnet[0] = '\0';   /* explicit address: always try it */
