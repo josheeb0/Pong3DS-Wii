@@ -12,9 +12,12 @@
  *      installed title the updater reports the new build and the URL, and you
  *      install it with FBI -- it does not pretend to have updated itself.
  *
- *   2. The running .3dsx is already loaded into memory, so overwriting the file
- *      on disk is safe; the new build is picked up on the next launch. We do
- *      not try to relaunch ourselves.
+ *   2. The running .3dsx is picked up again only on the next launch; we do not
+ *      try to relaunch ourselves. Replacing it is not as simple as it looks --
+ *      the Homebrew Launcher holds the running file open, so the directory
+ *      entry may refuse to be renamed or removed and the contents have to be
+ *      rewritten in place. pong_update_download() handles both, and is written
+ *      so that no failure can leave you without a working copy.
  *
  * For development, none of this is the fast path -- `make send` pushes a build
  * over wifi with 3dslink in about a second and never touches the SD card.
@@ -269,18 +272,58 @@ PongUpdateResult pong_update_download(const PongNetConfig *net,
     }
     size_t written = fwrite(buf, 1, resp.body_len, f);
     fclose(f);
-    free(buf);
 
     if (written != resp.body_len) {
+        free(buf);
         remove(tmp);
         snprintf(message, message_cap, "SD write incomplete (card full?)");
         return PONG_UPDATE_ERROR;
     }
 
-    remove(dest_path);
-    if (rename(tmp, dest_path) != 0) {
-        remove(tmp);
-        snprintf(message, message_cap, "could not replace %s", dest_path);
+    /*
+     * Move the staged file into place.
+     *
+     * The previous version did remove(dest) and then rename(), and deleted the
+     * staging file if the rename failed. Reported from a console: "could not
+     * replace sdmc:/3ds/pong3ds.3dsx" -- and by then it had deleted the
+     * destination, tried and failed to rename, and deleted the download too.
+     * The failure path destroyed BOTH copies of the program. A routine that
+     * exists to make updating safe must never be able to leave you with less
+     * than you started with.
+     *
+     * The cause is that the Homebrew Launcher keeps the running .3dsx open, so
+     * on this platform remove() and rename() against it can both fail -- the
+     * comment at the top of this file claiming the file was merely "loaded into
+     * memory" and therefore free to replace was an assumption, not a fact.
+     *
+     * So: try the atomic move, and if the directory entry cannot be touched,
+     * rewrite the contents in place instead, from the buffer still in hand.
+     * The staging file is kept until one of them has actually worked.
+     */
+    bool placed = (rename(tmp, dest_path) == 0);
+    int rename_err = placed ? 0 : errno;
+
+    if (!placed) {
+        FILE *d = fopen(dest_path, "wb");
+        if (d) {
+            size_t w2 = fwrite(buf, 1, resp.body_len, d);
+            if (fclose(d) == 0 && w2 == resp.body_len) {
+                placed = true;
+                remove(tmp);
+            }
+        }
+        pong_log("update: rename failed (errno %d); in-place rewrite %s",
+                 rename_err, placed ? "succeeded" : "FAILED");
+    }
+
+    free(buf);
+
+    if (!placed) {
+        /* Both copies still exist. Say where the new one is, so this is a
+         * rename away from being fixed rather than a dead end. */
+        snprintf(message, message_cap,
+                 "downloaded ok but could not replace it - new build is at %s",
+                 tmp);
         return PONG_UPDATE_ERROR;
     }
 
