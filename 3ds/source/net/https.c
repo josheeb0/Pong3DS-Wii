@@ -129,6 +129,30 @@ void https_global_exit(void)
 /** Read timeout, enforced with poll() since the 3DS has no SO_RCVTIMEO. */
 #define READ_TIMEOUT_MS 8000
 
+/*
+ * Response header buffer.
+ *
+ * Sized from what the hosts we actually talk to send, measured rather than
+ * guessed, because the first value here was guessed and was wrong:
+ *
+ *   pong.wardcrew.com  /api/version   731 B
+ *   api.github.com     /releases     1463 B
+ *   github.com         302 to asset  5144 B   <- 3.6KB of it is one CSP header
+ *   release-assets...  200 asset      857 B
+ *
+ * The old 1024 fit the game server and nothing else, so the game connected
+ * perfectly while every GitHub request died with TOOBIG before it ever saw a
+ * status line. Anything a server sends that we do not parse still has to fit
+ * here, and a Content-Security-Policy is the kind of header that grows without
+ * anyone telling us, hence the wide margin.
+ *
+ * Static rather than on the stack: 8KB of stack in a function that also drives
+ * an mbedTLS handshake is exactly the sort of thing that produced the worker
+ * stack bug. The neighbouring request buffer is static for the same reason, and
+ * this code is single-threaded by design.
+ */
+#define HTTPS_HEADER_MAX 8192
+
 /**
  * Blocks until the socket is readable, or the deadline passes.
  *
@@ -573,12 +597,20 @@ HttpsResult https_request(HttpsConn *c,
     /* ---- response head -------------------------------------------------- */
     /* Read until the blank line. Headers are small and bounded; anything that
      * does not fit is a server we do not recognise. */
-    char hbuf[1024];
+    static char hbuf[HTTPS_HEADER_MAX];
     size_t hlen = 0;
     size_t header_end = 0;
 
     for (;;) {
-        if (hlen >= sizeof hbuf - 1) return HTTPS_ERR_TOOBIG;
+        if (hlen >= sizeof hbuf - 1) {
+            /* Say how much arrived and show the start of it: a truncated header
+             * block is unreadable on the console screen, and without this the
+             * failure is a bare error code that names no host and no reason. */
+            pong_log("  HTTP  response headers exceed %u bytes -- giving up",
+                     (unsigned)sizeof hbuf);
+            pong_log("  HTTP  first 120 bytes: %.120s", hbuf);
+            return HTTPS_ERR_TOOBIG;
+        }
         int n = conn_read(c, (uint8_t *)hbuf + hlen, sizeof hbuf - 1 - hlen);
         if (n <= 0) { c->open = false; return HTTPS_ERR_READ; }
         hlen += (size_t)n;
