@@ -119,6 +119,24 @@ the Homebrew Launcher in about a second.
 `3ds/romfs/config.txt` ships the defaults; `sdmc:/3ds/pong3ds.cfg` overrides any
 of them. Changing servers never requires a rebuild.
 
+### Updating itself
+
+The menu's **SOURCE** row cycles through where the console looks for a newer
+build: upstream `josheeb0`, the `johndoe6345789` fork, or the game server.
+
+GitHub is the default because the server can only report the build *it* is
+running, so a server that has not been redeployed hides a newer release
+completely — a gap that is invisible from the console. Asking GitHub answers
+"is there a newer build" regardless of what any server is doing.
+
+`gh_owner`/`gh_repo` in the config name any repository. A target that matches no
+preset is shown in full and is never silently overwritten by cycling.
+
+This replaces the `.3dsx` on the SD card, applied at next launch. A `.cia`
+cannot install another `.cia` without `am:u` access, which is FBI's job — when
+running as an installed title the updater reports the build and the URL rather
+than pretending to have updated itself.
+
 ## Testing
 
 ```bash
