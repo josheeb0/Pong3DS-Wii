@@ -1,0 +1,327 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# A superseded push has nothing useful to say; cancel it rather than paying for
+# a run whose result is already stale.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/pong3ds
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Everything that can fail without a console or a devkitARM toolchain.
+  #
+  # The C codec test runs here deliberately: it is plain C99 with no libctru
+  # dependency, so CI can prove the 3DS's wire format still matches the
+  # TypeScript encoder. That is the check most likely to catch a real
+  # cross-platform break, and it costs seconds.
+  # ---------------------------------------------------------------------------
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            server/package-lock.json
+            web/package-lock.json
+
+      # The generated codecs are committed so the C build needs no Node. That
+      # only stays trustworthy if CI proves they match protocol.json.
+      - name: Protocol codegen is up to date
+        run: |
+          node tools/gen-protocol.mjs
+          if ! git diff --quiet -- shared/gen 3ds/source/net/pong_proto.h \
+                 3ds/source/net/pong_proto.c 3ds/test/golden_data.h \
+                 3ds/source/game/pong_trig.h; then
+            echo "::error::Generated files are stale. Run 'make proto' and commit the result."
+            git --no-pager diff --stat -- shared/gen 3ds/source/net 3ds/test
+            exit 1
+          fi
+          echo "no drift"
+
+      - name: Install server deps
+        run: npm ci --prefix server --no-audit --no-fund
+
+      - name: Server typecheck
+        run: npm run --prefix server typecheck
+
+      - name: Simulation tests
+        run: npm run --prefix server test
+
+      # Proves the C the console runs agrees with the TypeScript the server
+      # runs, byte for byte, under ASan/UBSan. clang to match local dev.
+      - name: C codec conformance (vs TypeScript encoder)
+        env:
+          CC: clang
+        run: make -C 3ds/test -f Makefile.host run
+
+      - name: Install web deps
+        run: npm ci --prefix web --no-audit --no-fund
+
+      - name: Web tests
+        run: npm run --prefix web test
+
+      - name: Web typecheck and build
+        run: npm run --prefix web build
+
+      - name: Bundle size
+        run: |
+          set -eo pipefail
+          js=$(find web/dist/assets -name '*.js' ! -name '*.map' | head -1)
+          raw=$(wc -c < "$js")
+          gz=$(gzip -c "$js" | wc -c)
+          echo "### Web bundle" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| | bytes | kB |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---:|---:|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| raw | $raw | $((raw/1024)) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| gzip | $gz | $((gz/1024)) |" >> "$GITHUB_STEP_SUMMARY"
+          # A ceiling rather than a ratchet: it should catch someone importing
+          # something enormous, not nag about ordinary growth.
+          limit=$((400 * 1024))
+          if [ "$gz" -gt "$limit" ]; then
+            echo "::error::gzipped bundle ${gz}B exceeds ${limit}B"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web-dist
+          path: web/dist
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Publish the server image (which contains the built web client) to GHCR.
+  #
+  # linux/amd64 only: rdesktop.local is x86_64, and cross-building arm64 under
+  # QEMU would multiply the build time for an image nothing would pull.
+  # ---------------------------------------------------------------------------
+  image:
+    name: Publish image
+    needs: [verify, cia]
+    runs-on: ubuntu-latest
+    # Never publish from a pull request: the token is read-only there, and an
+    # unreviewed branch should not be able to move :latest.
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      # Ship the console build inside the server image, so /downloads always
+      # serves the .3dsx matching the BUILD_ID the server reports.
+      - name: Fetch the 3DS build
+        uses: actions/download-artifact@v7
+        with:
+          name: pong3ds-build-${{ github.run_number }}
+          path: deploy/downloads
+
+      - name: Confirm what will be shipped
+        run: ls -la deploy/downloads
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+          labels: |
+            org.opencontainers.image.title=Pong3DS
+            org.opencontainers.image.description=Cross-play Pong between a browser and a Nintendo 3DS
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BUILD_ID=${{ github.run_number }}
+            GIT_SHA=${{ github.sha }}
+            RELEASE_URL=${{ github.server_url }}/${{ github.repository }}/releases/tag/build-${{ github.run_number }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Values reach the shell through env, never by template interpolation
+      # into the script body: tag names are attacker-influencable in the general
+      # case, and `${{ }}` inside run: is textual substitution, not quoting.
+      - name: Summary
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          BUILD_NUM: ${{ github.run_number }}
+          SHA: ${{ github.sha }}
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        run: |
+          {
+            echo "### Image published"
+            echo ""
+            echo '```'
+            printf '%s\n' "$TAGS"
+            echo '```'
+            echo ""
+            printf 'Build `%s` · commit `%s`\n' "$BUILD_NUM" "$SHA"
+            echo ""
+            echo "Deploy it:"
+            echo '```bash'
+            printf 'docker pull %s:latest\n' "$IMAGE"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Build the 3DS client and publish it to Releases.
+  #
+  # Split deliberately across two environments, because neither can do the whole
+  # job:
+  #
+  #   - The toolchain runs in devkitpro/devkitarm. Installing the SDK on the
+  #     runner instead would be simpler, but apt.devkitpro.org answers 403 to
+  #     everything (bot protection), so that route is unavailable from CI.
+  #
+  #   - Packaging runs on the RUNNER, not in that container. The image is Debian
+  #     bookworm (glibc 2.36) and makerom links against 2.38, so building the
+  #     .cia inside it dies with GLIBC_2.38 at the very last step. The runner has
+  #     2.39.
+  #
+  # Both halves were reproduced locally in Docker before being written here.
+  # ---------------------------------------------------------------------------
+  cia:
+    name: Build 3DS (.3dsx + .cia)
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write      # required to create releases
+    steps:
+      - uses: actions/checkout@v7
+
+      # mbedTLS is the slow part (a few minutes) and changes only when its
+      # version or our cipher config does, so key the cache on exactly those.
+      - name: Cache mbedTLS build
+        id: mbedtls-cache
+        uses: actions/cache@v6
+        with:
+          path: 3ds/vendor/mbedtls
+          key: mbedtls-arm11-${{ hashFiles('3ds/vendor/build-mbedtls.sh', '3ds/vendor/mbedtls_config_3ds.h') }}
+
+      # Runs as the runner's own uid so the artifacts are not left root-owned
+      # for the packaging steps that follow. devkitPro's paths come from the
+      # image's ENV, so no login shell is needed.
+      - name: Build .3dsx (devkitPro container)
+        env:
+          BUILD_ID: ${{ github.run_number }}
+        run: |
+          docker run --rm \
+            -v "$PWD":/work -w /work \
+            -u "$(id -u):$(id -g)" -e HOME=/tmp \
+            -e BUILD_ID="$BUILD_ID" \
+            devkitpro/devkitarm:latest \
+            bash -c 'set -e; ./3ds/vendor/build-mbedtls.sh; make -C 3ds BUILD_ID="$BUILD_ID"'
+
+      - name: Fetch CIA packaging tools
+        run: ./3ds/vendor/fetch-tools.sh
+
+      - name: Build .cia
+        run: ./3ds/build-cia.sh 3ds/pong3ds.elf 3ds/pong3ds.cia
+
+      - name: Report sizes
+        run: |
+          {
+            echo "### 3DS build"
+            echo ""
+            echo "| artifact | size |"
+            echo "|---|---:|"
+            for f in 3ds/pong3ds.3dsx 3ds/pong3ds.cia; do
+              printf '| %s | %s |\n' "$(basename "$f")" "$(du -h "$f" | cut -f1)"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Available on every run, including PRs, so a branch build can be tested
+      # on hardware without waiting for a release.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pong3ds-build-${{ github.run_number }}
+          path: |
+            3ds/pong3ds.3dsx
+            3ds/pong3ds.cia
+          retention-days: 30
+
+      - name: Publish release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_NUM: ${{ github.run_number }}
+          SHA: ${{ github.sha }}
+          REF_NAME: ${{ github.ref_name }}
+          IS_TAG: ${{ startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          set -euo pipefail
+
+          if [ "$IS_TAG" = "true" ]; then
+            TAG="$REF_NAME"
+            TITLE="Pong3DS $REF_NAME"
+            PRERELEASE=""
+          else
+            TAG="build-$BUILD_NUM"
+            TITLE="Build $BUILD_NUM"
+            PRERELEASE="--prerelease"
+          fi
+
+          # Notes are written to a file rather than passed inline, so nothing
+          # from the commit can be interpreted as shell.
+          {
+            printf '3DS client, build %s (`%s`).\n\n' "$BUILD_NUM" "${SHA:0:7}"
+            printf '| file | install |\n|---|---|\n'
+            printf '| `pong3ds.cia` | Install with FBI. Own HOME-menu title, 64MB mode. |\n'
+            printf '| `pong3ds.3dsx` | Copy to `sd:/3ds/`, launch from the Homebrew Launcher. |\n\n'
+            printf 'Tap the server field on the title screen to enter an address:\n\n'
+            printf -- '- `pong.wardcrew.com` - HTTPS on 443 (works anywhere)\n'
+            printf -- '- `192.168.4.29:8788` - plain HTTP on a LAN\n'
+            printf -- '- `tcp://192.168.4.29:8787` - raw TCP fast path, 60Hz\n\n'
+            printf 'Press X on the title screen to check for a newer build.\n'
+          } > /tmp/notes.md
+
+          # Re-running a workflow reuses the run number, so replace rather than
+          # fail on an existing release.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release delete "$TAG" --yes --cleanup-tag || true
+          fi
+
+          gh release create "$TAG" \
+            --title "$TITLE" \
+            --notes-file /tmp/notes.md \
+            $PRERELEASE \
+            3ds/pong3ds.cia \
+            3ds/pong3ds.3dsx
+
+          printf '### Released\n\n[%s](%s)\n' "$TAG" \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/tag/$TAG" >> "$GITHUB_STEP_SUMMARY"

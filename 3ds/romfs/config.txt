@@ -1,0 +1,68 @@
+# Default server settings, baked into the build.
+#
+# Override any of these WITHOUT rebuilding by creating sdmc:/3ds/pong3ds.cfg
+# with the same key=value format; values found there win.
+
+# ---------------------------------------------------------------------------
+# Internet path (the default, and all most people need).
+#
+# Everything runs over 443, so no extra ports have to be published anywhere.
+# Works on your home wifi and on a phone hotspot identically.
+# ---------------------------------------------------------------------------
+web_host=pong.wardcrew.com
+web_port=443
+web_tls=1
+web_path=/api/rpc
+
+# Verify the server certificate against the trust roots in romfs:/cacert.pem.
+# Leave this on. Clock errors are tolerated automatically (the 3DS RTC is
+# frequently wrong), so the usual reason people disable verification does not
+# apply here. Set to 0 only to debug a certificate problem.
+web_verify=1
+
+# ---------------------------------------------------------------------------
+# LAN fast path -- OPTIONAL, off by default.
+#
+# Raw TCP on its own port, which gives full 60Hz instead of the ~10Hz that
+# request/response polling allows. It cannot share port 443: that port is
+# TLS-terminated HTTP, and nginx and Cloudflare route by hostname and HTTP
+# verb, so a raw socket speaking our binary protocol is simply rejected.
+#
+# So it is off unless you deliberately publish a TCP port and name it here.
+# Empty lan_host = never attempted, no startup delay.
+#
+#   lan_host=192.168.4.29
+#   lan_port=8787
+#   lan_subnet=192.168.4.      # only try the LAN when on this subnet
+# ---------------------------------------------------------------------------
+lan_host=
+lan_port=8787
+lan_subnet=
+
+# auto | lan | web
+mode=auto
+
+# Shown to your opponent.
+name=3DS PLAYER
+
+# Check for a newer build on launch (0 disables).
+autoupdate=1
+
+# Where the UPDATE button looks. Cycle it from the menu (SOURCE), or set it here.
+#
+#   github  the newest published release, whatever any server is running
+#   server  what the game server is running -- the build you can play against
+#
+# GitHub is the default because it sees builds a server has not been redeployed
+# to yet, which is invisible from the console otherwise.
+#
+# The menu cycles these presets:
+#   josheeb0/Pong3DS-Wii        (upstream, the default)
+#   johndoe6345789/Pong3DS-Wii  (fork)
+#   the game server
+#
+# Any other owner/repo set here is kept: the menu will not overwrite it, it just
+# starts the cycle from the top.
+update_source=github
+gh_owner=josheeb0
+gh_repo=Pong3DS-Wii

@@ -1,0 +1,52 @@
+# Host builds of the 3DS C code, so both the codec and the netcode can be
+# verified without devkitARM or 3DS hardware.
+#
+#   make -f Makefile.host run    codec conformance vs the TypeScript encoder
+#   make -f Makefile.host play   plays a real match against a running server
+#
+# Warnings are errors here on purpose: this is the cheapest place to catch a
+# mistake in code that is awkward to debug on a console.
+CC      ?= cc
+CFLAGS  := -std=c99 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined
+LDFLAGS := -fsanitize=address,undefined
+
+PROTO := ../source/net/pong_proto.c
+CLIENT := ../source/game/client.c
+
+.PHONY: all run play addr gh clean
+
+all: test_proto test_play test_addr test_ghparse
+
+test_proto: test_proto.c $(PROTO) ../source/net/pong_proto.h golden_data.h
+	$(CC) $(CFLAGS) -o $@ test_proto.c $(PROTO) $(LDFLAGS)
+
+test_play: test_play.c $(PROTO) $(CLIENT) ../source/game/client.h
+	$(CC) $(CFLAGS) -I../source/net -I../source/game -o $@ test_play.c $(PROTO) $(CLIENT) $(LDFLAGS)
+
+run: test_proto test_addr test_ghparse
+	./test_proto
+	@echo ""
+	./test_addr
+	@echo ""
+	./test_ghparse
+
+play: test_play
+	./test_play $(ARGS)
+
+test_addr: test_addr.c ../source/util/addr.c ../source/util/addr.h
+	$(CC) $(CFLAGS) -I../source/net -I../source/util -o $@ test_addr.c ../source/util/addr.c $(LDFLAGS)
+
+addr: test_addr
+	./test_addr
+
+# update.c needs libctru; the preset table in updatetarget.c does not, so the
+# host test links the real table rather than a copy that could drift from it.
+test_ghparse: test_ghparse.c ../source/util/ghparse.c ../source/util/updatetarget.c ../source/util/ghparse.h
+	$(CC) $(CFLAGS) -I../source/util -I../source/net -o $@ \
+	  test_ghparse.c ../source/util/ghparse.c ../source/util/updatetarget.c $(LDFLAGS)
+
+gh: test_ghparse
+	./test_ghparse
+
+clean:
+	rm -rf test_proto test_play test_addr test_ghparse *.dSYM

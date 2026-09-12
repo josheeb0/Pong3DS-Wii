@@ -1,0 +1,40 @@
+node_modules/
+dist/
+build/
+
+# 3DS build output
+3ds/build/
+3ds/*.3dsx
+3ds/*.smdh
+3ds/*.elf
+3ds/*.cia
+3ds/*.map
+3ds/.ciabuild/
+3ds/tools/*/build/
+3ds/tools/*/*.3dsx
+3ds/tools/*/*.smdh
+3ds/tools/*/*.elf
+
+# Vendored, fetched by scripts rather than committed (mbedTLS is ~5MB of source
+# and the built .a files are toolchain-specific).
+3ds/vendor/.src/
+3ds/vendor/mbedtls/
+3ds/vendor/tools/
+# Host test binaries have no extension, so match by prefix and keep the
+# sources. Enumerating them by name meant adding a new test silently committed
+# its binary -- which then shadowed compilation on a different architecture in
+# CI, producing a genuinely baffling "Syntax error" from the shell.
+3ds/test/test_*
+!3ds/test/test_*.c
+!3ds/test/test_*.h
+3ds/test/*.dSYM
+
+# Generated at package time by build-cia.sh -- 3s of silence does not
+# belong in git.
+3ds/assets/banner.wav
+
+.DS_Store
+*.log
+
+# TypeScript incremental build state
+*.tsbuildinfo
