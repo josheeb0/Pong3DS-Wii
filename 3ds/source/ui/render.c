@@ -618,6 +618,21 @@ static void draw_bottom(const PongView *view, const PongHud *hud)
 {
     (void)view;
 
+    /*
+     * The title screen owns the whole bottom screen.
+     *
+     * This panel used to be drawn first on every screen and the menu painted
+     * over it, so on the title screen the transport status ("not connected")
+     * sat underneath the PONG MULTIPLAYER header in the same few pixels. Two
+     * unrelated pieces of text in one place, neither readable. The menu already
+     * has a header of its own and nothing to say about a connection that has
+     * not been attempted yet.
+     */
+    if (hud->screen == SCREEN_TITLE) {
+        draw_menu(hud);
+        return;
+    }
+
     /* Status panel. Taller than it was, because the two lines inside it are
      * bigger and cramping them was most of why they were hard to read. */
     C2D_DrawRectangle(0.0f, 0.0f, 0.0f, 320.0f, 50.0f,
@@ -667,8 +682,6 @@ static void draw_bottom(const PongView *view, const PongHud *hud)
         }
 
         dyn("SLIDE TO MOVE", C2D_AlignCenter, 160.0f, 236.0f - 16.0f, 0.46f, CLR_FAINT);
-    } else if (hud->screen == SCREEN_TITLE) {
-        draw_menu(hud);
     } else {
         C2D_DrawText(&s_tapToStart, C2D_AlignCenter | C2D_WithColor,
                      160.0f, 92.0f, 0.5f, 0.6f, 0.6f, CLR_TEXT);

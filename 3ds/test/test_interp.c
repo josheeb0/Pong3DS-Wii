@@ -184,6 +184,60 @@ int main(void)
         ok(!v2.extrapolated, "and is not reported as predicted", NULL);
     }
 
+    printf("\n=== render delay absorbs the burst, not the sample spacing ===\n");
+    {
+        /*
+         * What an HTTPS polling client actually sees: ten polls a second, each
+         * delivering three 30Hz snapshots at once. The gaps BETWEEN SNAPSHOTS
+         * are therefore 0, 0, 100, 0, 0, 100... and their median is 0 -- which
+         * is the sample spacing, not the burst spacing. A buffer sized from it
+         * starves for most of every cycle.
+         */
+        PongClient c;
+        pong_client_init(&c);
+        start_match(&c, 0);
+
+        uint32_t now = 1000, tick = 100;
+        for (int poll = 0; poll < 14; poll++) {
+            for (int k = 0; k < 3; k++) {
+                sync_clock(&c, tick, now);
+                feed(&c, tick, PONG_FIELD_W_Q4 / 2, PONG_FIELD_H_Q4 / 2, 64, 0,
+                     PONG_MATCH_STATE_PLAY, now);
+                tick += 2;                 /* 30Hz samples on a 60Hz clock */
+            }
+            now += 100;                    /* the next poll, 100ms later */
+        }
+
+        uint32_t d = pong_client_render_delay_ms(&c);
+        char det[80];
+        snprintf(det, sizeof det, "%u ms for a 100ms burst cycle", (unsigned)d);
+        ok(d >= 100, "delay covers the gap between bursts", det);
+        ok(d <= 250, "and stays within the cap", NULL);
+    }
+
+    printf("\n=== a steady transport still gets a small delay ===\n");
+    {
+        /* 30Hz arriving evenly: nothing to absorb, so the buffer should stay
+         * small rather than inheriting a burst-sized delay. */
+        PongClient c;
+        pong_client_init(&c);
+        start_match(&c, 0);
+
+        uint32_t now = 1000, tick = 100;
+        for (int i = 0; i < 40; i++) {
+            sync_clock(&c, tick, now);
+            feed(&c, tick, PONG_FIELD_W_Q4 / 2, PONG_FIELD_H_Q4 / 2, 64, 0,
+                 PONG_MATCH_STATE_PLAY, now);
+            tick += 2;
+            now += 33;
+        }
+
+        uint32_t d = pong_client_render_delay_ms(&c);
+        char det[80];
+        snprintf(det, sizeof det, "%u ms for an even 30Hz feed", (unsigned)d);
+        ok(d <= 120, "steady arrivals do not inflate the buffer", det);
+    }
+
     if (failures) {
         printf("\nFAILED: %d check(s)\n\n", failures);
         return 1;

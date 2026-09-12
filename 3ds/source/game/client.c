@@ -165,10 +165,22 @@ uint32_t pong_client_render_delay_ms(const PongClient *c)
 {
     if (c->gap_count < 4) return 100;
 
-    /* Median of the observed arrival gaps. Derived from what we actually get
-     * rather than the transport's nominal rate: a polling client receives
-     * batched 30Hz snapshots but receives them in ~100ms bursts, so the buffer
-     * must absorb the burst spacing, not the sample spacing. */
+    /*
+     * A high percentile of the observed arrival gaps -- NOT the median, which
+     * is what this used to take and which is wrong for exactly the transport it
+     * was written for.
+     *
+     * A polling client receives batched snapshots: three 30Hz samples land
+     * together, then nothing for 100ms. The gaps between arrivals are therefore
+     * 0, 0, 100, 0, 0, 100..., whose median is 0. The buffer came out at its 50ms
+     * floor against a 100ms cycle, so the client starved for most of every poll
+     * -- predicting the ball, then correcting when the burst landed, sixty times
+     * a second. That is what "jagged online" was.
+     *
+     * The 90th percentile picks out the burst spacing instead, which is the
+     * thing the buffer actually has to cover. A steady transport has no tail, so
+     * its percentile is its sample spacing and the delay stays small.
+     */
     uint32_t tmp[32];
     memcpy(tmp, c->gaps, sizeof(uint32_t) * (size_t)c->gap_count);
     for (int i = 1; i < c->gap_count; i++) {
@@ -177,8 +189,14 @@ uint32_t pong_client_render_delay_ms(const PongClient *c)
         while (j >= 0 && tmp[j] > k) { tmp[j + 1] = tmp[j]; j--; }
         tmp[j + 1] = k;
     }
-    uint32_t median = tmp[c->gap_count / 2];
-    uint32_t delay = median * 2 + 20;
+    int idx = (c->gap_count * 9) / 10;
+    if (idx >= c->gap_count) idx = c->gap_count - 1;
+    uint32_t p90 = tmp[idx];
+
+    /* One and a half cycles plus a fixed margin: enough that an ordinary late
+     * burst is absorbed rather than seen, without burying the player in latency
+     * to hide a gap that rarely happens. */
+    uint32_t delay = p90 + p90 / 2 + 20;
     if (delay < 50) delay = 50;
     if (delay > 250) delay = 250;
     return delay;
