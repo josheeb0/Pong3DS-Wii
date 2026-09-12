@@ -18,7 +18,16 @@
 
 #define TX_QUEUE_BYTES 1024
 #define RX_QUEUE_BYTES 4096
-#define WORKER_STACK   (48 * 1024)
+/*
+ * Stack for the HTTPS worker.
+ *
+ * A TLS handshake is stack-hungry: bignum arithmetic for ECDHE, plus parsing a
+ * multi-certificate chain, all on this thread. 48KB was a guess and is close to
+ * the usual guidance for mbedTLS, which is not a comfortable place to be -- an
+ * overflow here would present as a crash or corruption rather than an error
+ * message. 128KB on a console with 64MB of userland RAM is not worth economising.
+ */
+#define WORKER_STACK   (128 * 1024)
 
 struct PongNet {
     PongNetConfig cfg;
@@ -160,7 +169,7 @@ static void http_worker(void *arg)
             n->https = https_open(n->cfg.web_host, n->cfg.web_port,
                                   n->cfg.web_tls, n->cfg.web_verify);
             if (!n->https) {
-                snprintf(n->err, sizeof n->err, "HTTPS connect failed");
+                snprintf(n->err, sizeof n->err, "%s", https_open_error());
                 n->state = PONG_LINK_FAILED;
                 next_at = (uint32_t)osGetTime() + 2000;
                 continue;

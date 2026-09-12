@@ -58,6 +58,14 @@ void https_global_exit(void);
  */
 HttpsConn *https_open(const char *host, uint16_t port, bool use_tls, bool verify);
 
+/**
+ * Why the last https_open() failed.
+ *
+ * Valid only immediately after https_open() returns NULL. Kept globally because
+ * the connection object -- and its error buffer -- is freed on failure.
+ */
+const char *https_open_error(void);
+
 /** True if the connection is still usable for another keep-alive request. */
 bool https_is_open(const HttpsConn *c);
 

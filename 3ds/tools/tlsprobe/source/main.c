@@ -51,7 +51,7 @@ static void probe(const char *host, uint16_t port, bool tls)
 
     if (!c) {
         printf("  \x1b[31mconnect/handshake FAILED\x1b[0m (%llums)\n", t1 - t0);
-        printf("  this is the answer we needed -- see docs\n\n");
+        printf("  \x1b[33m%s\x1b[0m\n\n", https_open_error());
         return;
     }
 

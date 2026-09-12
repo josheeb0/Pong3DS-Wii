@@ -23,6 +23,16 @@
 
 /* ------------------------------------------------------------------ state */
 
+/*
+ * Why the failure reason lives outside the connection.
+ *
+ * https_open() frees the HttpsConn on failure, which destroyed the one thing
+ * worth having: the mbedTLS error explaining WHY. The caller was left printing
+ * a generic "HTTPS connect failed", which is exactly the message that tells you
+ * nothing when a console in another room will not connect.
+ */
+static char g_last_open_error[320] = "";
+
 static mbedtls_entropy_context  g_entropy;
 static mbedtls_ctr_drbg_context g_drbg;
 static mbedtls_x509_crt         g_cacert;
@@ -211,9 +221,16 @@ static int tcp_connect(const char *host, uint16_t port, uint32_t timeout_ms)
 
 /* ------------------------------------------------------------------- open */
 
+const char *https_open_error(void) { return g_last_open_error; }
+
 HttpsConn *https_open(const char *host, uint16_t port, bool use_tls, bool verify)
 {
-    if (use_tls && !g_inited) return NULL;
+    g_last_open_error[0] = '\0';
+
+    if (use_tls && !g_inited) {
+        snprintf(g_last_open_error, sizeof g_last_open_error, "TLS not initialised");
+        return NULL;
+    }
 
     HttpsConn *c = (HttpsConn *)calloc(1, sizeof *c);
     if (!c) return NULL;
@@ -223,7 +240,8 @@ HttpsConn *https_open(const char *host, uint16_t port, bool use_tls, bool verify
 
     c->fd = tcp_connect(host, port, 4000);
     if (c->fd < 0) {
-        snprintf(c->errbuf, sizeof c->errbuf, "tcp connect failed (errno %d)", errno);
+        snprintf(g_last_open_error, sizeof g_last_open_error,
+                 "tcp connect to %s:%u failed (errno %d)", host, (unsigned)port, errno);
         free(c);
         return NULL;
     }
@@ -308,6 +326,9 @@ fail:
     c->last_err = rc;
     mbedtls_strerror(rc, c->errbuf, sizeof c->errbuf);
 fail_msg:
+    /* Copy out before the connection is freed, or the reason dies with it. */
+    snprintf(g_last_open_error, sizeof g_last_open_error, "%s (-0x%04x)",
+             c->errbuf, (unsigned)-rc);
     mbedtls_ssl_free(&c->ssl);
     mbedtls_ssl_config_free(&c->conf);
     close(c->fd);
