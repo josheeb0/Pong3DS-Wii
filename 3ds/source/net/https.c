@@ -1,4 +1,5 @@
 #include "https.h"
+#include "log.h"
 
 #include <3ds.h>
 #include <stdio.h>
@@ -75,6 +76,7 @@ HttpsResult https_global_init(void)
     static const char pers[] = "pong3ds";
     int rc = mbedtls_ctr_drbg_seed(&g_drbg, mbedtls_entropy_func, &g_entropy,
                                    (const unsigned char *)pers, sizeof pers - 1);
+    pong_log("entropy (PS)   : %s", rc == 0 ? "seeded ok" : "SEED FAILED");
     if (rc != 0) {
         mbedtls_ctr_drbg_free(&g_drbg);
         mbedtls_entropy_free(&g_entropy);
@@ -98,9 +100,12 @@ HttpsResult https_global_init(void)
         fclose(f);
         pem[n] = '\0';
         /* mbedtls_x509_crt_parse wants the NUL included in the length for PEM. */
-        if (mbedtls_x509_crt_parse(&g_cacert, pem, n + 1) == 0) {
-            g_have_ca = true;
-        }
+        int pr = mbedtls_x509_crt_parse(&g_cacert, pem, n + 1);
+        pong_log("CA bundle      : %zu bytes, parse rc=%d (%s)", n, pr,
+                 pr == 0 ? "all certs ok" : (pr > 0 ? "some certs REJECTED" : "FAILED"));
+        if (pr >= 0) g_have_ca = true;
+    } else {
+        pong_log("CA bundle      : romfs:/cacert.pem NOT FOUND");
     }
 
     g_inited = true;
@@ -187,6 +192,7 @@ static int wait_connected(int fd, const struct sockaddr *addr, socklen_t alen,
                           uint32_t timeout_ms, char *err, size_t errcap)
 {
     uint64_t deadline = osGetTime() + timeout_ms;
+    unsigned spins = 0;
 
     for (;;) {
         int rc = connect(fd, addr, alen);
@@ -197,9 +203,11 @@ static int wait_connected(int fd, const struct sockaddr *addr, socklen_t alen,
             return -1;
         }
         if (osGetTime() >= deadline) {
-            snprintf(err, errcap, "connect timed out after %lums", (unsigned long)timeout_ms);
+            snprintf(err, errcap, "connect timed out after %lums (last errno %d)",
+                     (unsigned long)timeout_ms, errno);
             return -1;
         }
+        if (++spins % 33 == 0) pong_log("  TCP   still connecting (errno %d)", errno);
         svcSleepThread(30 * 1000 * 1000LL);   /* 30ms */
     }
 }
@@ -223,10 +231,18 @@ static int tcp_connect(const char *host, uint16_t port, uint32_t timeout_ms,
     hints.ai_socktype = SOCK_STREAM;
 
     struct addrinfo *res = NULL;
+    uint64_t t_dns = osGetTime();
     int gai = getaddrinfo(host, portstr, &hints, &res);
     if (gai != 0 || res == NULL) {
         snprintf(err, errcap, "cannot resolve %s (gai %d)", host, gai);
+        pong_log("  DNS   %s -> FAILED (gai %d, %llums)", host, gai,
+                 (unsigned long long)(osGetTime() - t_dns));
         return -1;
+    }
+    {
+        struct sockaddr_in *sa = (struct sockaddr_in *)res->ai_addr;
+        pong_log("  DNS   %s -> %s (%llums)", host, inet_ntoa(sa->sin_addr),
+                 (unsigned long long)(osGetTime() - t_dns));
     }
 
     int fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
@@ -239,7 +255,11 @@ static int tcp_connect(const char *host, uint16_t port, uint32_t timeout_ms,
     int flags = fcntl(fd, F_GETFL, 0);
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 
+    uint64_t t_conn = osGetTime();
     int rc = connect(fd, res->ai_addr, res->ai_addrlen);
+    pong_log("  TCP   connect() -> rc=%d errno=%d%s", rc, rc == 0 ? 0 : errno,
+             rc == 0 ? " (immediate)" : (errno == EINPROGRESS ? " (EINPROGRESS, expected)" : ""));
+
     if (rc != 0 && errno != EINPROGRESS && errno != EALREADY) {
         snprintf(err, errcap, "connect to %s:%u failed (errno %d)", host,
                  (unsigned)port, errno);
@@ -250,10 +270,13 @@ static int tcp_connect(const char *host, uint16_t port, uint32_t timeout_ms,
 
     if (rc != 0 && wait_connected(fd, res->ai_addr, res->ai_addrlen,
                                   timeout_ms, err, errcap) != 0) {
+        pong_log("  TCP   FAILED: %s (%llums)", err,
+                 (unsigned long long)(osGetTime() - t_conn));
         close(fd);
         freeaddrinfo(res);
         return -1;
     }
+    pong_log("  TCP   established in %llums", (unsigned long long)(osGetTime() - t_conn));
 
     freeaddrinfo(res);
 
@@ -349,15 +372,27 @@ HttpsConn *https_open(const char *host, uint16_t port, bool use_tls, bool verify
 
     mbedtls_ssl_set_bio(&c->ssl, &c->fd, bio_send, bio_recv, NULL);
 
+    uint64_t t_hs = osGetTime();
     while ((rc = mbedtls_ssl_handshake(&c->ssl)) != 0) {
-        if (rc != MBEDTLS_ERR_SSL_WANT_READ && rc != MBEDTLS_ERR_SSL_WANT_WRITE) goto fail;
+        if (rc != MBEDTLS_ERR_SSL_WANT_READ && rc != MBEDTLS_ERR_SSL_WANT_WRITE) {
+            char hb[160];
+            mbedtls_strerror(rc, hb, sizeof hb);
+            pong_log("  TLS   handshake FAILED after %llums: %s (-0x%04x)",
+                     (unsigned long long)(osGetTime() - t_hs), hb, (unsigned)-rc);
+            goto fail;
+        }
     }
+    pong_log("  TLS   %s / %s in %llums",
+             mbedtls_ssl_get_version(&c->ssl), mbedtls_ssl_get_ciphersuite(&c->ssl),
+             (unsigned long long)(osGetTime() - t_hs));
 
     if (verify) {
         c->verify_flags = mbedtls_ssl_get_verify_result(&c->ssl);
         /* Clock-only failures are tolerated; everything else is fatal. */
         const uint32_t clock_only =
             MBEDTLS_X509_BADCERT_EXPIRED | MBEDTLS_X509_BADCERT_FUTURE;
+        pong_log("  TLS   verify flags 0x%08lx%s", (unsigned long)c->verify_flags,
+                 c->verify_flags == 0 ? " (clean)" : "");
         uint32_t fatal = c->verify_flags & ~clock_only;
         if (fatal != 0) {
             char why[192];
@@ -499,6 +534,7 @@ HttpsResult https_request(HttpsConn *c,
 
     uint64_t t0 = osGetTime();
     memset(resp, 0, sizeof *resp);
+    pong_log("  HTTP  %s %s (body %u bytes)", method, path, (unsigned)body_len);
 
     /* ---- request ------------------------------------------------------- */
     char head[512];
@@ -660,6 +696,8 @@ HttpsResult https_request(HttpsConn *c,
 
     resp->body_len = got;
     resp->elapsed_ms = (uint32_t)(osGetTime() - t0);
+    pong_log("  HTTP  -> %d, %u bytes in %lums%s", resp->status, (unsigned)got,
+             (unsigned long)resp->elapsed_ms, chunked ? " (chunked)" : "");
 
     if (close_after) c->open = false;
     return HTTPS_OK;
