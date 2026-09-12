@@ -15,7 +15,14 @@ function str(name: string, dflt: string): string {
 export const config = {
   /** HTTP + WebSocket. CapRover routes pong.wardcrew.com here. */
   httpPort: num('HTTP_PORT', 8788),
-  /** Raw TCP for the 3DS on the LAN. Published on the host by CapRover. */
+  /**
+   * Raw TCP for the 3DS's LAN fast path. Set to 0 to disable.
+   *
+   * Optional by design: it cannot share 443 with HTTPS (that port is
+   * TLS-terminated HTTP and routes by hostname), so a deployment that only
+   * publishes 443 simply runs without it. The 3DS then uses the HTTPS path,
+   * which needs no extra port.
+   */
   tcpPort: num('TCP_PORT', 8787),
   tickHz: num('TICK_HZ', 60),
   /** Directory containing the built web client; empty disables static serving. */

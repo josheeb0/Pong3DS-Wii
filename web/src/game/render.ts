@@ -41,6 +41,14 @@ export interface RenderInput {
   myYQ4: number;
   mySide: number;
   countdownSecs: number;
+  /**
+   * What to show when there is no match to draw.
+   *
+   * This used to be hardcoded to "CONNECTING...", which meant an idle client
+   * sitting happily at the lobby looked permanently stuck -- the single most
+   * misleading thing the UI did.
+   */
+  idleText?: string;
   palette?: Palette;
 }
 
@@ -87,7 +95,7 @@ export function render(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement,
 
   const v = input.view;
   if (!v) {
-    drawCentreText(ctx, pal, 'CONNECTING…', 28);
+    drawCentreText(ctx, pal, input.idleText ?? 'READY', 26);
     return;
   }
 

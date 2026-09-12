@@ -1,16 +1,14 @@
 # Default server settings, baked into the build.
 #
 # Override any of these WITHOUT rebuilding by creating sdmc:/3ds/pong3ds.cfg
-# with the same key=value format; values found there win. That file is also
-# where the app records the last transport that worked, so a launch away from
-# home does not stall retrying the LAN.
+# with the same key=value format; values found there win.
 
-# LAN fast path: raw TCP, full 60Hz. Tried first when on this subnet.
-lan_host=192.168.4.29
-lan_port=8787
-lan_subnet=192.168.4.
-
-# Internet path: HTTPS request/response through Cloudflare.
+# ---------------------------------------------------------------------------
+# Internet path (the default, and all most people need).
+#
+# Everything runs over 443, so no extra ports have to be published anywhere.
+# Works on your home wifi and on a phone hotspot identically.
+# ---------------------------------------------------------------------------
 web_host=pong.wardcrew.com
 web_port=443
 web_tls=1
@@ -21,6 +19,25 @@ web_path=/api/rpc
 # frequently wrong), so the usual reason people disable verification does not
 # apply here. Set to 0 only to debug a certificate problem.
 web_verify=1
+
+# ---------------------------------------------------------------------------
+# LAN fast path -- OPTIONAL, off by default.
+#
+# Raw TCP on its own port, which gives full 60Hz instead of the ~10Hz that
+# request/response polling allows. It cannot share port 443: that port is
+# TLS-terminated HTTP, and nginx and Cloudflare route by hostname and HTTP
+# verb, so a raw socket speaking our binary protocol is simply rejected.
+#
+# So it is off unless you deliberately publish a TCP port and name it here.
+# Empty lan_host = never attempted, no startup delay.
+#
+#   lan_host=192.168.4.29
+#   lan_port=8787
+#   lan_subnet=192.168.4.      # only try the LAN when on this subnet
+# ---------------------------------------------------------------------------
+lan_host=
+lan_port=8787
+lan_subnet=
 
 # auto | lan | web
 mode=auto

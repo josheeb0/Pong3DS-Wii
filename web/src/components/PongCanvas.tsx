@@ -5,6 +5,17 @@ import { FIELD_H_Q4 } from '../../../shared/sim/paddle';
 import { render, resizeCanvas } from '../game/render';
 import type { GameClient } from '../game/client';
 
+/** Says what the client is actually doing, rather than always "CONNECTING". */
+function idleTextFor(status: string): string {
+  switch (status) {
+    case 'idle': return 'PICK A MODE BELOW';
+    case 'connecting': return 'CONNECTING…';
+    case 'lobby': return 'PICK A MODE BELOW';
+    case 'queued': return 'WAITING FOR AN OPPONENT…';
+    default: return 'READY';
+  }
+}
+
 /**
  * The only 60fps surface in the app.
  *
@@ -32,6 +43,7 @@ export default function PongCanvas({ client }: { client: GameClient }) {
         myYQ4: client.getMyY(),
         mySide: hud.side,
         countdownSecs: hud.countdown,
+        idleText: idleTextFor(hud.status),
       });
     };
     draw();
