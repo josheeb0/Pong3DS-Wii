@@ -1,0 +1,184 @@
+# makerom spec for building Pong3DS as an installable CIA.
+#
+# A CIA installs to the HOME menu with its own title, gets a full 64MB of
+# application memory (worth having: mbedTLS plus a 1MB SOC buffer plus citro3d
+# command buffers is not free), and does not depend on the Homebrew Launcher.
+#
+# The part that actually matters below is ServiceAccessControl. A CIA only gets
+# the services it declares, and a missing entry does not produce a helpful
+# error -- it produces a failed service init at runtime. This app needs:
+#   soc:U   sockets (the whole point)
+#   ps:ps   the console CSPRNG, which seeds our TLS (see net/tls_glue.c)
+#   ssl:C   not used -- we bundle mbedTLS -- but harmless and useful if we
+#           ever fall back to the system stack
+#   cfg:u   system region/language, used for the font
+#   ndm:u   network daemon manager; required to keep wifi up during play
+
+BasicInfo:
+  Title                   : "Pong3DS"
+  ProductCode             : "CTR-P-PONG"
+  Logo                    : Homebrew
+
+RomFs:
+  RootPath                : $(ROMFS_ROOT)
+
+TitleInfo:
+  Category                : Application
+  UniqueId                : 0xFF3D5
+
+Option:
+  UseOnSD                 : true
+  FreeProductCode         : true
+  MediaFootPadding        : false
+  EnableCompress          : true
+  EnableCrypt             : false
+
+AccessControlInfo:
+  CoreVersion             : 2
+
+  # 64MB gives headroom for TLS buffers alongside the GPU command buffers.
+  SystemMode              : 64MB
+  SystemModeExt           : Legacy
+  CpuSpeed                : 268MHz
+  EnableL2Cache           : true
+
+  IdealProcessor          : 0
+  AffinityMask            : 1
+  Priority                : 16
+  MaxCpu                  : 0x9E
+
+  DisableDebug            : false
+  EnableForceDebug        : false
+  CanWriteSharedPage      : true
+  CanUsePrivilegedPriority: false
+  CanUseNonAlphabetAndNumber: true
+  PermitMainFunctionArgument: true
+  CanShareDeviceMemory    : true
+  RunnableOnSleep         : false
+  SpecialMemoryArrange    : true
+
+  MemoryType              : Application
+  HandleTableSize         : 0x200
+
+  IORegisterMapping:
+   - 1ff00000-1ff7ffff
+  MemoryMapping:
+   - 1f000000-1f5fffff:r
+
+  SystemCallAccess:
+    ArbitrateAddress: 34
+    Break: 60
+    CancelTimer: 28
+    ClearEvent: 25
+    ClearTimer: 29
+    CloseHandle: 35
+    ConnectToPort: 45
+    ControlMemory: 1
+    CreateAddressArbiter: 33
+    CreateEvent: 23
+    CreateMemoryBlock: 30
+    CreateMutex: 19
+    CreateSemaphore: 21
+    CreateThread: 8
+    CreateTimer: 26
+    DuplicateHandle: 39
+    ExitProcess: 3
+    ExitThread: 9
+    GetCurrentProcessorNumber: 17
+    GetHandleInfo: 41
+    GetProcessId: 53
+    GetProcessIdOfThread: 54
+    GetProcessIdealProcessor: 6
+    GetProcessInfo: 43
+    GetResourceLimit: 56
+    GetResourceLimitCurrentValues: 58
+    GetResourceLimitLimitValues: 57
+    GetSystemInfo: 42
+    GetSystemTick: 40
+    GetThreadContext: 59
+    GetThreadId: 55
+    GetThreadIdealProcessor: 15
+    GetThreadInfo: 44
+    GetThreadPriority: 11
+    MapMemoryBlock: 31
+    OutputDebugString: 61
+    QueryMemory: 2
+    ReleaseMutex: 20
+    ReleaseSemaphore: 22
+    ReplyAndReceive: 79
+    SendSyncRequest1: 46
+    SendSyncRequest2: 47
+    SendSyncRequest3: 48
+    SendSyncRequest4: 49
+    SendSyncRequest: 50
+    SetThreadPriority: 12
+    SetTimer: 27
+    SignalEvent: 24
+    SleepThread: 10
+    UnmapMemoryBlock: 32
+    WaitSynchronization1: 36
+    WaitSynchronizationN: 37
+
+  InterruptNumbers:
+  ServiceAccessControl:
+   - APT:U
+   - ac:u
+   - act:u
+   - cfg:u
+   - csnd:SND
+   - dsp::DSP
+   - fs:USER
+   - gsp::Gpu
+   - hid:USER
+   - ir:rst
+   - ir:u
+   - ir:USER
+   - ndm:u
+   - news:u
+   - nwm::UDS
+   - ptm:u
+   - pxi:dev
+   - ps:ps
+   - soc:U
+   - ssl:C
+   - y2r:u
+
+  FileSystemAccess:
+   - DirectSdmc
+   - DirectSdmcWrite
+
+SystemControlInfo:
+  SaveDataSize: 0K
+  RemasterVersion: 0
+  StackSize: 0x40000
+
+  Dependency:
+    ac: 0x0004013000002402
+    am: 0x0004013000001502
+    camera: 0x0004013000001602
+    cfg: 0x0004013000001702
+    codec: 0x0004013000001802
+    csnd: 0x0004013000002702
+    dlp: 0x0004013000002802
+    dsp: 0x0004013000001a02
+    friends: 0x0004013000003202
+    gpio: 0x0004013000001b02
+    gsp: 0x0004013000001c02
+    hid: 0x0004013000001d02
+    http: 0x0004013000002902
+    i2c: 0x0004013000001e02
+    mcu: 0x0004013000001f02
+    mic: 0x0004013000002002
+    ndm: 0x0004013000002b02
+    news: 0x0004013000003502
+    nfc: 0x0004013000004002
+    nim: 0x0004013000002c02
+    nwm: 0x0004013000002d02
+    pdn: 0x0004013000002102
+    ps: 0x0004013000003102
+    ptm: 0x0004013000002202
+    qtm: 0x0004013000004202
+    ro: 0x0004013000003702
+    socket: 0x0004013000002e02
+    spi: 0x0004013000002302
+    ssl: 0x0004013000002f02

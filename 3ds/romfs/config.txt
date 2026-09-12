@@ -1,0 +1,32 @@
+# Default server settings, baked into the build.
+#
+# Override any of these WITHOUT rebuilding by creating sdmc:/3ds/pong3ds.cfg
+# with the same key=value format; values found there win. That file is also
+# where the app records the last transport that worked, so a launch away from
+# home does not stall retrying the LAN.
+
+# LAN fast path: raw TCP, full 60Hz. Tried first when on this subnet.
+lan_host=192.168.4.29
+lan_port=8787
+lan_subnet=192.168.4.
+
+# Internet path: HTTPS request/response through Cloudflare.
+web_host=pong.wardcrew.com
+web_port=443
+web_tls=1
+web_path=/api/rpc
+
+# Verify the server certificate against the trust roots in romfs:/cacert.pem.
+# Leave this on. Clock errors are tolerated automatically (the 3DS RTC is
+# frequently wrong), so the usual reason people disable verification does not
+# apply here. Set to 0 only to debug a certificate problem.
+web_verify=1
+
+# auto | lan | web
+mode=auto
+
+# Shown to your opponent.
+name=3DS PLAYER
+
+# Check for a newer build on launch (0 disables).
+autoupdate=1

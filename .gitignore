@@ -1,0 +1,35 @@
+node_modules/
+dist/
+build/
+
+# 3DS build output
+3ds/build/
+3ds/*.3dsx
+3ds/*.smdh
+3ds/*.elf
+3ds/*.cia
+3ds/*.map
+3ds/.ciabuild/
+3ds/tools/*/build/
+3ds/tools/*/*.3dsx
+3ds/tools/*/*.smdh
+3ds/tools/*/*.elf
+
+# Vendored, fetched by scripts rather than committed (mbedTLS is ~5MB of source
+# and the built .a files are toolchain-specific).
+3ds/vendor/.src/
+3ds/vendor/mbedtls/
+3ds/vendor/tools/
+3ds/test/test_proto
+3ds/test/test_play
+3ds/test/*.dSYM
+
+# Generated at package time by build-cia.sh -- 3s of silence does not
+# belong in git.
+3ds/assets/banner.wav
+
+.DS_Store
+*.log
+
+# TypeScript incremental build state
+*.tsbuildinfo
