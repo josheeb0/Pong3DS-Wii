@@ -55,7 +55,17 @@ CFLAGS	:=	-g -Wall -O2 -mword-relocations \
 			-ffunction-sections \
 			$(ARCH)
 
-CFLAGS	+=	$(INCLUDE) -D__3DS__ -DMBEDTLS_CONFIG_FILE='"mbedtls_config_3ds.h"'
+# Build number, stamped by CI (make BUILD_ID=<run number>). Local builds get 0,
+# which no published build will ever equal -- so a workstation build is always
+# visibly "not a release" and the updater always offers the real one.
+#
+# Note: make does not rebuild when only a compiler flag changes, so switching
+# BUILD_ID on an existing build tree keeps the old value baked in. CI always
+# starts from a fresh checkout so it is unaffected; locally, `make clean` first
+# if the stamped number matters.
+BUILD_ID ?= 0
+
+CFLAGS	+=	$(INCLUDE) -D__3DS__ -DMBEDTLS_CONFIG_FILE='"mbedtls_config_3ds.h"' -DPONG_BUILD_ID=$(BUILD_ID)
 
 CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++11
 

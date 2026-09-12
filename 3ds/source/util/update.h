@@ -16,10 +16,28 @@
 /** Where a .3dsx launched from the Homebrew Launcher normally lives. */
 #define PONG_DSX_PATH "sdmc:/3ds/pong3ds.3dsx"
 
-/** Bumped by the build; compared against the server's manifest. */
+/**
+ * Build number, stamped by CI via -DPONG_BUILD_ID.
+ *
+ * 0 for a local build, which no published build can ever be, so a workstation
+ * build is always visibly not-a-release and the updater always offers the real
+ * one rather than silently considering itself current.
+ */
 #ifndef PONG_BUILD_ID
-#define PONG_BUILD_ID 1
+#define PONG_BUILD_ID 0
 #endif
+
+/*
+ * The build number as a string, embedded in the binary.
+ *
+ * Means `strings pong3ds.3dsx | grep "Pong3DS build"` identifies any artifact
+ * without running it -- useful when several .3dsx files have accumulated on an
+ * SD card and it is no longer obvious which is which. It also makes the build
+ * stamping verifiable at compile time rather than by trusting the Makefile.
+ */
+#define PONG__STR2(x) #x
+#define PONG__STR(x)  PONG__STR2(x)
+#define PONG_VERSION_BANNER "Pong3DS build " PONG__STR(PONG_BUILD_ID)
 
 typedef enum {
     PONG_UPDATE_CURRENT = 0,   /* already newest */

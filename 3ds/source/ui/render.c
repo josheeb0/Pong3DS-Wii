@@ -202,8 +202,14 @@ static void draw_menu(const PongHud *hud)
     dyn("MULTIPLAYER", 0, 62.0f, 9.0f, 0.44f, CLR_TEXT);
 
     char b[48];
-    snprintf(b, sizeof b, "b%lu", (unsigned long)hud->build_id);
-    dyn(b, C2D_AlignRight, 310.0f, 10.0f, 0.36f, CLR_DIM);
+    if (hud->build_id == 0) {
+        /* A local build is not a release and should never be mistaken for one. */
+        snprintf(b, sizeof b, "DEV BUILD");
+        dyn(b, C2D_AlignRight, 310.0f, 10.0f, 0.38f, CLR_WARN);
+    } else {
+        snprintf(b, sizeof b, "BUILD %lu", (unsigned long)hud->build_id);
+        dyn(b, C2D_AlignRight, 310.0f, 10.0f, 0.38f, CLR_ACCENT);
+    }
 
     for (int i = 0; i < MENU_COUNT; i++) {
         const PongRect *r = &PONG_MENU_RECT[i];
@@ -246,8 +252,15 @@ static void draw_menu(const PongHud *hud)
     if (hud->message && hud->message[0]) {
         dyn_wrap(hud->message, 0, 10.0f, 222.0f, 0.33f, CLR_WARN, 300.0f);
     } else {
-        dyn("D-PAD + A, or tap", C2D_AlignCenter, 160.0f, 224.0f, 0.31f,
-            mix(CLR_DIM, CLR_BG, 0.3f));
+        char v[64];
+        if (hud->build_id == 0) {
+            snprintf(v, sizeof v, "dev build  ·  protocol v%d  ·  D-PAD + A or tap",
+                     PONG_PROTOCOL_VERSION);
+        } else {
+            snprintf(v, sizeof v, "build %lu  ·  protocol v%d  ·  D-PAD + A or tap",
+                     (unsigned long)hud->build_id, PONG_PROTOCOL_VERSION);
+        }
+        dyn(v, C2D_AlignCenter, 160.0f, 224.0f, 0.31f, mix(CLR_DIM, CLR_BG, 0.25f));
     }
 }
 
@@ -364,6 +377,13 @@ static void draw_top(const PongView *view, const PongHud *hud)
         dyn("M U L T I P L A Y E R", C2D_AlignCenter, 200.0f, 108.0f, 0.5f, CLR_TEXT);
         dyn("cross-play with any browser",
             C2D_AlignCenter, 200.0f, 146.0f, 0.4f, CLR_DIM);
+        {
+            char vb[64];
+            if (hud->build_id == 0) snprintf(vb, sizeof vb, "DEV BUILD");
+            else snprintf(vb, sizeof vb, "BUILD %lu", (unsigned long)hud->build_id);
+            dyn(vb, 0, 10.0f, 214.0f, 0.4f,
+                hud->build_id == 0 ? CLR_WARN : CLR_DIM);
+        }
 
         C2D_DrawText(&s_pressA, C2D_AlignRight | C2D_WithColor,
                      392.0f, 214.0f, 0.5f, 0.4f, 0.4f, CLR_DIM);

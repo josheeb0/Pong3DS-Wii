@@ -36,6 +36,10 @@
 
 static u32 *g_socBuf = NULL;
 
+/* Kept in the binary even though nothing reads it, so the build is identifiable
+ * with `strings` alone. */
+static const char g_version_banner[] __attribute__((used)) = PONG_VERSION_BANNER;
+
 static void socShutdown(void) { socExit(); }
 
 /* --------------------------------------------------------------------- app */

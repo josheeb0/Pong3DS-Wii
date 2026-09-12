@@ -237,12 +237,15 @@ jobs:
       # for the packaging steps that follow. devkitPro's paths come from the
       # image's ENV, so no login shell is needed.
       - name: Build .3dsx (devkitPro container)
+        env:
+          BUILD_ID: ${{ github.run_number }}
         run: |
           docker run --rm \
             -v "$PWD":/work -w /work \
             -u "$(id -u):$(id -g)" -e HOME=/tmp \
+            -e BUILD_ID="$BUILD_ID" \
             devkitpro/devkitarm:latest \
-            bash -c 'set -e; ./3ds/vendor/build-mbedtls.sh; make -C 3ds'
+            bash -c 'set -e; ./3ds/vendor/build-mbedtls.sh; make -C 3ds BUILD_ID="$BUILD_ID"'
 
       - name: Fetch CIA packaging tools
         run: ./3ds/vendor/fetch-tools.sh
