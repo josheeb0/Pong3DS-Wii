@@ -238,6 +238,61 @@ int main(void)
         ok(d <= 120, "steady arrivals do not inflate the buffer", det);
     }
 
+    printf("\n=== the buffer resizes gradually, not in steps ===\n");
+    {
+        /*
+         * The render cursor is (server tick - render delay). The clock half is
+         * carefully eased, with a comment explaining that a jump "would make the
+         * render cursor leap, which reads as a stutter". The delay half was
+         * recomputed from a sliding window and assigned outright every frame, so
+         * whenever the window turned over, the cursor jumped -- which is the
+         * same stutter, arriving through the other term.
+         *
+         * Feeds a steady stream, then an abruptly bursty one, and watches the
+         * step size rather than the destination.
+         */
+        PongClient c;
+        pong_client_init(&c);
+        start_match(&c, 0);
+
+        uint32_t now = 1000, tick = 100;
+        PongView v;
+
+        for (int i = 0; i < 40; i++) {          /* even 30Hz */
+            sync_clock(&c, tick, now);
+            feed(&c, tick, PONG_FIELD_W_Q4 / 2, PONG_FIELD_H_Q4 / 2, 64, 0,
+                 PONG_MATCH_STATE_PLAY, now);
+            pong_client_update(&c, now, &v);
+            tick += 2; now += 33;
+        }
+
+        uint32_t worst = 0, prev = c.render_delay_ms;
+        for (int poll = 0; poll < 20; poll++) {  /* abruptly bursty */
+            for (int k = 0; k < 3; k++) {
+                sync_clock(&c, tick, now);
+                feed(&c, tick, PONG_FIELD_W_Q4 / 2, PONG_FIELD_H_Q4 / 2, 64, 0,
+                     PONG_MATCH_STATE_PLAY, now);
+                tick += 2;
+            }
+            /* Six render frames per poll, as the console would run. */
+            for (int f = 0; f < 6; f++) {
+                pong_client_update(&c, now + f * 16, &v);
+                uint32_t step = (c.render_delay_ms > prev)
+                              ? c.render_delay_ms - prev : prev - c.render_delay_ms;
+                if (step > worst) worst = step;
+                prev = c.render_delay_ms;
+            }
+            now += 100;
+        }
+
+        char det[96];
+        snprintf(det, sizeof det, "largest single-frame change %u ms", (unsigned)worst);
+        ok(worst <= 4, "delay never jumps between frames", det);
+
+        snprintf(det, sizeof det, "settled at %u ms", (unsigned)c.render_delay_ms);
+        ok(c.render_delay_ms >= 100, "and still reaches a burst-sized buffer", det);
+    }
+
     if (failures) {
         printf("\nFAILED: %d check(s)\n\n", failures);
         return 1;

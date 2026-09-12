@@ -275,7 +275,33 @@ void pong_client_update(PongClient *c, uint32_t now_ms, PongView *out)
     else c->my_y += err / 4;
 
     /* --- everything else: sampled in the past ----------------------------- */
-    c->render_delay_ms = pong_client_render_delay_ms(c);
+    /*
+     * Ease toward the target buffer size rather than adopting it.
+     *
+     * The render cursor is (server tick - render delay). The clock term is
+     * eased for exactly this reason -- see pong_client_on_pong, which says a
+     * jump "would make the render cursor leap, which reads as a stutter even
+     * when the new estimate is better". The delay term moves the cursor just as
+     * directly and was being recomputed from a sliding window and assigned
+     * outright, every frame. When the window turned over, the cursor leapt: a
+     * measured 101ms in one frame, six ticks of ball travel, which is the ball
+     * jumping rather than moving.
+     *
+     * 2ms per frame crosses the whole legal range in about a second and a half,
+     * which is far quicker than a transport's behaviour actually changes, while
+     * never being visible in a single frame.
+     */
+    {
+        uint32_t target = pong_client_render_delay_ms(c);
+        const uint32_t step = 2;
+        if (target > c->render_delay_ms) {
+            uint32_t d = target - c->render_delay_ms;
+            c->render_delay_ms += (d < step) ? d : step;
+        } else if (target < c->render_delay_ms) {
+            uint32_t d = c->render_delay_ms - target;
+            c->render_delay_ms -= (d < step) ? d : step;
+        }
+    }
     c->arrival_gap_ms = (c->gap_count > 0) ? c->gaps[(c->gap_head + 31) % 32] : 0;
 
     if (c->count == 0) {
