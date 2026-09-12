@@ -64,7 +64,7 @@ void pong_render_init(void)
     mkstatic(&s_title, "PONG MULTIPLAYER!");
     mkstatic(&s_tapToStart, "TAP THE TOUCH SCREEN\nTO CONTINUE");
     mkstatic(&s_pressA, "you are currently on 3ds");
-    mkstatic(&s_credit, "made by josheeb0 on github");
+    mkstatic(&s_credit, "made by josheeb0 on github :)");
 }
 
 void pong_render_exit(void)
