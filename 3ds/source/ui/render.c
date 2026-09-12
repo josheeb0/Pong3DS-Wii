@@ -18,12 +18,30 @@
 #define CLR_WARN      C2D_Color32(0xff, 0xc8, 0x78, 0xFF)
 #define CLR_SCORE     C2D_Color32(0x2a, 0x44, 0x5a, 0xFF)
 #define CLR_PANEL     C2D_Color32(0x0d, 0x11, 0x17, 0xFF)
-#define CLR_BTN       C2D_Color32(0x10, 0x19, 0x22, 0xFF)
-#define CLR_BTN_SEL   C2D_Color32(0x15, 0x2a, 0x38, 0xFF)
-#define CLR_EDGE      C2D_Color32(0x1c, 0x2f, 0x3e, 0xFF)
+#define CLR_BTN       C2D_Color32(0x0e, 0x16, 0x1e, 0xFF)
+#define CLR_BTN_SEL   C2D_Color32(0x16, 0x2c, 0x3a, 0xFF)
+#define CLR_EDGE      C2D_Color32(0x1a, 0x2b, 0x38, 0xFF)
 #define CLR_ACCENT    C2D_Color32(0x7e, 0xe7, 0xff, 0xFF)
 #define CLR_ACCENT2   C2D_Color32(0xff, 0x9d, 0xe2, 0xFF)
 #define CLR_GOOD      C2D_Color32(0x7d, 0xff, 0xa8, 0xFF)
+#define CLR_HEADER    C2D_Color32(0x0a, 0x12, 0x19, 0xFF)
+#define CLR_TRAIL     C2D_Color32(0x16, 0x24, 0x30, 0xFF)
+
+/* Blends two colours. Used for the selection animation, so the highlight
+ * travels rather than snapping between rows -- motion is most of what makes an
+ * interface feel considered rather than assembled. */
+static u32 mix(u32 a, u32 b, float t)
+{
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    u8 out[4];
+    for (int i = 0; i < 4; i++) {
+        u8 ca = (u8)((a >> (i * 8)) & 0xFF);
+        u8 cb = (u8)((b >> (i * 8)) & 0xFF);
+        out[i] = (u8)(ca + (cb - ca) * t);
+    }
+    return (u32)out[0] | ((u32)out[1] << 8) | ((u32)out[2] << 16) | ((u32)out[3] << 24);
+}
 
 /* Two buffers: one for strings that never change, one cleared every frame.
  * Forgetting to clear the dynamic buffer leaks glyphs until it fills and
@@ -137,30 +155,55 @@ static const MenuLabel MENU_LABEL[MENU_COUNT] = {
     [MENU_UPDATE] = { "UPDATE",      NULL },
 };
 
-/*
- * A little paddle-and-ball glyph, drawn with primitives.
- *
- * citro2d has no icon support and pulling in a spritesheet for five glyphs
- * would mean a t3x pipeline and a bigger romfs, for something three rectangles
- * express perfectly well.
- */
-static void icon_pong(float x, float y, u32 a, u32 b)
+/* Per-item glyphs, so the rows are distinguishable at a glance rather than
+ * being five identical boxes with different words in them. */
+static void icon_for(int item, float x, float y, u32 a, u32 b)
 {
-    C2D_DrawRectSolid(x,          y,        0.0f, 2.0f, 12.0f, a);
-    C2D_DrawRectSolid(x + 12.0f,  y + 3.0f, 0.0f, 2.0f, 12.0f, b);
-    C2D_DrawRectSolid(x + 6.0f,   y + 7.0f, 0.0f, 3.0f, 3.0f,  CLR_BALL);
+    switch (item) {
+    case MENU_QUICK:   /* two paddles and a ball: a normal match */
+        C2D_DrawRectSolid(x,         y,        0.0f, 2.0f, 12.0f, a);
+        C2D_DrawRectSolid(x + 12.0f, y + 3.0f, 0.0f, 2.0f, 12.0f, b);
+        C2D_DrawCircleSolid(x + 7.0f, y + 7.0f, 0.0f, 2.0f, CLR_BALL);
+        break;
+    case MENU_ROOM: {  /* a keypad: something you type */
+        for (int r = 0; r < 3; r++)
+            for (int c = 0; c < 3; c++)
+                C2D_DrawRectSolid(x + c * 5.0f, y + r * 5.0f, 0.0f, 3.0f, 3.0f,
+                                  (r + c) % 2 ? b : a);
+        break;
+    }
+    case MENU_BOT:     /* a blocky head: the CPU */
+        C2D_DrawRectSolid(x + 1.0f, y + 1.0f, 0.0f, 12.0f, 11.0f, a);
+        C2D_DrawRectSolid(x + 4.0f, y + 4.0f, 0.0f, 2.0f, 2.0f, CLR_BG);
+        C2D_DrawRectSolid(x + 9.0f, y + 4.0f, 0.0f, 2.0f, 2.0f, CLR_BG);
+        C2D_DrawRectSolid(x + 4.0f, y + 8.0f, 0.0f, 7.0f, 1.0f, CLR_BG);
+        break;
+    default:
+        C2D_DrawRectSolid(x + 2.0f, y + 2.0f, 0.0f, 10.0f, 10.0f, a);
+        break;
+    }
 }
 
 static void draw_menu(const PongHud *hud)
 {
+    /* The highlight eases toward the selection instead of jumping. Held in a
+     * static because it is presentation state with no meaning to the rest of
+     * the program -- putting it in the app struct would imply otherwise. */
+    static float sel_y = 0.0f;
+    static bool  sel_init = false;
+    const PongRect *target = &PONG_MENU_RECT[hud->menu_sel];
+    if (!sel_init) { sel_y = target->y; sel_init = true; }
+    sel_y += (target->y - sel_y) * 0.35f;
+
     /* Header. */
-    C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 36.0f, CLR_PANEL);
-    C2D_DrawRectSolid(0.0f, 35.0f, 0.0f, 320.0f, 1.0f, CLR_EDGE);
-    dyn("PONG MULTIPLAYER!", 0, 12.0f, 6.0f, 0.52f, CLR_TEXT);
+    C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 32.0f, CLR_HEADER);
+    C2D_DrawRectSolid(0.0f, 31.0f, 0.0f, 320.0f, 1.0f, CLR_ACCENT);
+    dyn("PONG", 0, 12.0f, 5.0f, 0.62f, CLR_ACCENT);
+    dyn("MULTIPLAYER", 0, 62.0f, 9.0f, 0.44f, CLR_TEXT);
 
     char b[48];
-    snprintf(b, sizeof b, "build %lu", (unsigned long)hud->build_id);
-    dyn(b, C2D_AlignRight, 308.0f, 10.0f, 0.36f, CLR_DIM);
+    snprintf(b, sizeof b, "b%lu", (unsigned long)hud->build_id);
+    dyn(b, C2D_AlignRight, 310.0f, 10.0f, 0.36f, CLR_DIM);
 
     for (int i = 0; i < MENU_COUNT; i++) {
         const PongRect *r = &PONG_MENU_RECT[i];
@@ -169,34 +212,42 @@ static void draw_menu(const PongHud *hud)
 
         panel(r, sel ? CLR_BTN_SEL : CLR_BTN, sel ? CLR_ACCENT : CLR_EDGE);
 
-        /* An accent bar on the selected row, so the highlight reads instantly
-         * rather than relying on a subtle fill difference. */
-        if (sel) C2D_DrawRectSolid(r->x, r->y, 0.0f, 3.0f, r->h, CLR_ACCENT);
-
         if (primary) {
-            icon_pong(r->x + 14.0f, r->y + (r->h - 15.0f) / 2.0f,
-                      sel ? CLR_ACCENT : CLR_DIM, sel ? CLR_ACCENT2 : CLR_DIM);
-            dyn(MENU_LABEL[i].label, 0, r->x + 38.0f, r->y + 6.0f, 0.5f,
+            icon_for(i, r->x + 14.0f, r->y + (r->h - 14.0f) / 2.0f,
+                     sel ? CLR_ACCENT : CLR_DIM, sel ? CLR_ACCENT2 : CLR_DIM);
+            dyn(MENU_LABEL[i].label, 0, r->x + 40.0f, r->y + 5.0f, 0.5f,
                 sel ? CLR_TEXT : CLR_DIM);
             if (MENU_LABEL[i].hint) {
-                dyn(MENU_LABEL[i].hint, 0, r->x + 38.0f, r->y + 23.0f, 0.34f, CLR_DIM);
+                dyn(MENU_LABEL[i].hint, 0, r->x + 40.0f, r->y + 22.0f, 0.33f,
+                    sel ? CLR_DIM : mix(CLR_DIM, CLR_BG, 0.45f));
+            }
+            /* A chevron on the active row, pointing at the thing A will do. */
+            if (sel) {
+                float cx = r->x + r->w - 18.0f, cy = r->y + r->h / 2.0f;
+                for (int k = 0; k < 5; k++) {
+                    C2D_DrawRectSolid(cx + k, cy - 5.0f + k, 0.0f, 1.5f, 2.0f, CLR_ACCENT);
+                    C2D_DrawRectSolid(cx + k, cy + 4.0f - k, 0.0f, 1.5f, 2.0f, CLR_ACCENT);
+                }
             }
         } else {
             dyn(MENU_LABEL[i].label, C2D_AlignCenter,
-                r->x + r->w / 2.0f, r->y + 8.0f, 0.42f, sel ? CLR_TEXT : CLR_DIM);
+                r->x + r->w / 2.0f, r->y + 7.0f, 0.42f, sel ? CLR_TEXT : CLR_DIM);
         }
     }
 
-    /* The server this will connect to -- the single most useful thing to see
-     * before pressing anything. */
+    /* The travelling highlight: a bar down the left edge of the active row. */
+    C2D_DrawRectSolid(12.0f, sel_y, 0.0f, 3.0f,
+                      PONG_MENU_RECT[hud->menu_sel].h, CLR_ACCENT);
+
     if (hud->server_addr && hud->server_addr[0]) {
-        dyn_wrap(hud->server_addr, 0, 20.0f, 195.0f, 0.34f, CLR_DIM, 164.0f);
+        dyn_wrap(hud->server_addr, 0, 20.0f, 196.0f, 0.32f, CLR_DIM, 164.0f);
     }
 
     if (hud->message && hud->message[0]) {
-        dyn_wrap(hud->message, 0, 10.0f, 222.0f, 0.34f, CLR_WARN, 300.0f);
+        dyn_wrap(hud->message, 0, 10.0f, 222.0f, 0.33f, CLR_WARN, 300.0f);
     } else {
-        dyn("D-PAD + A, or tap", C2D_AlignCenter, 160.0f, 224.0f, 0.32f, CLR_DIM);
+        dyn("D-PAD + A, or tap", C2D_AlignCenter, 160.0f, 224.0f, 0.31f,
+            mix(CLR_DIM, CLR_BG, 0.3f));
     }
 }
 
@@ -278,26 +329,46 @@ static void draw_attract(const PongHud *hud)
     u32 dim2 = C2D_Color32(0x22, 0x18, 0x28, 0xFF);
 
     for (int y = 0; y < 240; y += 16) {
-        C2D_DrawRectSolid(199.0f, (float)y, 0.0f, 2.0f, 9.0f,
-                          C2D_Color32(0x11, 0x1c, 0x24, 0xFF));
+        C2D_DrawRectSolid(199.0f, (float)y, 0.0f, 2.0f, 9.0f, CLR_TRAIL);
     }
     C2D_DrawRectSolid(24.0f,  ly - 20.0f, 0.0f, 5.0f, 40.0f, dim);
     C2D_DrawRectSolid(371.0f, ry - 20.0f, 0.0f, 5.0f, 40.0f, dim2);
-    C2D_DrawCircleSolid(bx, by, 0.0f, 4.0f, C2D_Color32(0x1e, 0x2c, 0x38, 0xFF));
+
+    /* A short trail behind the ball. Rectangles rather than circles: circles
+     * force a citro2d state change each time, and at four of them per frame
+     * behind a menu that is not worth paying for. */
+    for (int k = 6; k >= 1; k--) {
+        float tt = t - (float)k * 2.0f;
+        float tx = 200.0f + 150.0f * sinf(tt * 0.013f);
+        float ty = 120.0f + 80.0f  * sinf(tt * 0.021f);
+        C2D_DrawRectSolid(tx - 1.5f, ty - 1.5f, 0.0f, 3.0f, 3.0f,
+                          mix(CLR_TRAIL, CLR_BG, (float)k / 7.0f));
+    }
+    C2D_DrawCircleSolid(bx, by, 0.0f, 4.0f, C2D_Color32(0x24, 0x36, 0x46, 0xFF));
 }
 
 static void draw_top(const PongView *view, const PongHud *hud)
 {
     switch (hud->screen) {
-    case SCREEN_TITLE:
+    case SCREEN_TITLE: {
         draw_attract(hud);
-        C2D_DrawText(&s_title, C2D_AlignCenter | C2D_WithColor,
-                     200.0f, 78.0f, 0.5f, 0.9f, 0.9f, CLR_TEXT);
+
+        /* Letterbox bands: they frame the title and, conveniently, stop the
+         * demo rally competing with the text for attention. */
+        C2D_DrawRectSolid(0.0f, 60.0f, 0.0f, 400.0f, 74.0f,
+                          C2D_Color32(0x06, 0x0a, 0x0e, 0xE8));
+        C2D_DrawRectSolid(0.0f, 60.0f, 0.0f, 400.0f, 1.0f, CLR_EDGE);
+        C2D_DrawRectSolid(0.0f, 133.0f, 0.0f, 400.0f, 1.0f, CLR_EDGE);
+
+        dyn("PONG", C2D_AlignCenter, 200.0f, 66.0f, 1.5f, CLR_ACCENT);
+        dyn("M U L T I P L A Y E R", C2D_AlignCenter, 200.0f, 108.0f, 0.5f, CLR_TEXT);
         dyn("cross-play with any browser",
-            C2D_AlignCenter, 200.0f, 112.0f, 0.42f, CLR_DIM);
+            C2D_AlignCenter, 200.0f, 146.0f, 0.4f, CLR_DIM);
+
         C2D_DrawText(&s_pressA, C2D_AlignRight | C2D_WithColor,
-                     392.0f, 214.0f, 0.5f, 0.42f, 0.42f, CLR_DIM);
+                     392.0f, 214.0f, 0.5f, 0.4f, 0.4f, CLR_DIM);
         break;
+    }
 
     case SCREEN_CONNECTING:
         C2D_DrawText(&s_title, C2D_AlignCenter | C2D_WithColor,
@@ -309,11 +380,34 @@ static void draw_top(const PongView *view, const PongHud *hud)
     case SCREEN_QUEUED:
         draw_attract(hud);
         if (hud->room_code && hud->room_code[0]) {
-            /* Big, because the whole point is reading it to someone else. */
-            dyn("ROOM CODE", C2D_AlignCenter, 200.0f, 52.0f, 0.5f, CLR_DIM);
-            dyn(hud->room_code, C2D_AlignCenter, 200.0f, 78.0f, 1.6f, CLR_ACCENT);
-            dyn("enter this on the other device",
-                C2D_AlignCenter, 200.0f, 150.0f, 0.44f, CLR_TEXT);
+            dyn("ROOM CODE", C2D_AlignCenter, 200.0f, 48.0f, 0.46f, CLR_DIM);
+
+            /* One boxed character each, so it reads as a code to be
+             * transcribed rather than a word, and ambiguous glyphs are easier
+             * to pick apart when read aloud. */
+            int n = (int)strlen(hud->room_code);
+            if (n > 8) n = 8;
+            float bw = 34.0f, gap = 6.0f;
+            float total = n * bw + (n - 1) * gap;
+            float x0 = 200.0f - total / 2.0f;
+            for (int i = 0; i < n; i++) {
+                PongRect cell = { x0 + i * (bw + gap), 74.0f, bw, 46.0f };
+                panel(&cell, CLR_BTN, CLR_ACCENT);
+                char ch[2] = { hud->room_code[i], 0 };
+                dyn(ch, C2D_AlignCenter, cell.x + bw / 2.0f, cell.y + 7.0f,
+                    1.0f, CLR_ACCENT);
+            }
+
+            dyn("enter this code on the other device",
+                C2D_AlignCenter, 200.0f, 134.0f, 0.42f, CLR_TEXT);
+
+            /* Three dots cycling: says "still waiting" without a spinner that
+             * would need its own animation state. */
+            int phase = (hud->frame / 20) % 4;
+            for (int i = 0; i < 3; i++) {
+                C2D_DrawCircleSolid(190.0f + i * 10.0f, 166.0f, 0.0f, 3.0f,
+                                    i < phase ? CLR_ACCENT : CLR_EDGE);
+            }
         } else {
             dyn("WAITING FOR AN OPPONENT", C2D_AlignCenter, 200.0f, 100.0f, 0.62f, CLR_TEXT);
             dyn("a CPU opponent is offered after 15s",
