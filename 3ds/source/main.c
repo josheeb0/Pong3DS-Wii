@@ -138,7 +138,16 @@ static void edit_server_address(App *a)
     pong_addr_format(&a->cfg.net, a->addr, sizeof a->addr);
     /* Persist immediately: typing an address on a 3DS keyboard once is enough. */
     pong_config_save(&a->cfg);
-    snprintf(a->message, sizeof a->message, "saved");
+
+    /* Say which path was configured. A bare private IP is taken to mean the LAN
+     * fast path, and reinterpreting what someone typed without telling them is
+     * how a setting ends up mysteriously not doing what they expected. */
+    if (a->cfg.net.lan_host[0]) {
+        snprintf(a->message, sizeof a->message, "LAN %s:%u - 60Hz direct",
+                 a->cfg.net.lan_host, (unsigned)a->cfg.net.lan_port);
+    } else {
+        snprintf(a->message, sizeof a->message, "saved: %s", a->addr);
+    }
 }
 
 /*
