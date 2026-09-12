@@ -1,7 +1,11 @@
-# PC build. Needs SDL3 (brew install sdl3 / apt install libsdl3-dev).
+# Desktop build: macOS, Linux and Windows (MinGW/MSYS2).
 #
 # Compiles the shared interface and renderer seam with the SDL3 backend. No
 # devkitPro, no console toolchain -- which is the point of the seam.
+#
+# SDL3:  macOS    brew install sdl3
+#        Linux    libsdl3-dev, or built from source (see the CI workflow)
+#        Windows  MSYS2: pacman -S mingw-w64-ucrt-x86_64-SDL3
 
 CC      ?= cc
 CFLAGS  ?= -std=c99 -Wall -Wextra -O2 -g
@@ -13,6 +17,17 @@ INC     := -I$(ROOT)/src/gfx -I$(ROOT)/src/ui -I$(ROOT)/3ds/source/game -I$(ROOT
 # impression.
 # Passed inline rather than exported: make's `export` does not reliably reach
 # $(shell) in the version macOS ships, so the path goes on the command itself.
+# Windows produces an .exe and needs Winsock linked explicitly; nothing else
+# about the build differs, which is the point of keeping the platform
+# differences inside net_pc.c rather than here.
+ifeq ($(OS),Windows_NT)
+  EXE  := .exe
+  PLAT_LIBS := -lws2_32
+else
+  EXE  :=
+  PLAT_LIBS :=
+endif
+
 BREW_SDL3 := $(shell brew --prefix sdl3 2>/dev/null)
 PKGPATH   := $(if $(BREW_SDL3),$(BREW_SDL3)/lib/pkgconfig:)$(PKG_CONFIG_PATH)
 SDL       := $(shell PKG_CONFIG_PATH="$(PKGPATH)" pkg-config --cflags --libs sdl3 2>/dev/null)
@@ -27,13 +42,15 @@ SRC := main_sdl.c net_pc.c \
        $(ROOT)/3ds/source/net/pong_proto.c \
        $(ROOT)/3ds/source/game/client.c
 
-pong-pc: $(SRC)
-	$(CC) $(CFLAGS) $(INC) -o $@ $(SRC) $(SDL) -lm
+pong-pc$(EXE): $(SRC)
+	$(CC) $(CFLAGS) $(INC) -o $@ $(SRC) $(SDL) $(PLAT_LIBS) -lm
 
-run: pong-pc
-	./pong-pc
+all: pong-pc$(EXE)
+
+run: pong-pc$(EXE)
+	./pong-pc$(EXE)
 
 clean:
-	rm -f pong-pc
+	rm -f pong-pc pong-pc.exe
 
-.PHONY: run clean
+.PHONY: all run clean
