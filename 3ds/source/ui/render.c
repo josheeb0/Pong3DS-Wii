@@ -2,6 +2,7 @@
 #include "pong_proto.h"
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 
 /* Q4 field units -> top-screen pixels: /16 for fixed point, /2 for the
  * 800x480 -> 400x240 mapping. One shift, exact at both extremes. */
@@ -17,6 +18,12 @@
 #define CLR_WARN      C2D_Color32(0xff, 0xc8, 0x78, 0xFF)
 #define CLR_SCORE     C2D_Color32(0x2a, 0x44, 0x5a, 0xFF)
 #define CLR_PANEL     C2D_Color32(0x0d, 0x11, 0x17, 0xFF)
+#define CLR_BTN       C2D_Color32(0x10, 0x19, 0x22, 0xFF)
+#define CLR_BTN_SEL   C2D_Color32(0x15, 0x2a, 0x38, 0xFF)
+#define CLR_EDGE      C2D_Color32(0x1c, 0x2f, 0x3e, 0xFF)
+#define CLR_ACCENT    C2D_Color32(0x7e, 0xe7, 0xff, 0xFF)
+#define CLR_ACCENT2   C2D_Color32(0xff, 0x9d, 0xe2, 0xFF)
+#define CLR_GOOD      C2D_Color32(0x7d, 0xff, 0xa8, 0xFF)
 
 /* Two buffers: one for strings that never change, one cleared every frame.
  * Forgetting to clear the dynamic buffer leaks glyphs until it fills and
@@ -81,12 +88,116 @@ static void dyn_wrap(const char *s, u32 flags, float x, float y, float scale,
  * the drawing code and the hit-testing in main.c cannot drift apart -- a
  * button you can see but not press is a miserable bug to chase.
  */
-const PongRect PONG_UI_ADDR_BOX    = {  14.0f,  72.0f, 292.0f, 42.0f };
-const PongRect PONG_UI_CONNECT_BTN = {  14.0f, 128.0f, 292.0f, 48.0f };
+/*
+ * Bottom screen is 320x240. Three primary actions get full-width rows big
+ * enough to hit with a thumb; the two utility actions share a smaller row at
+ * the bottom, because they are things you do rarely and should not compete for
+ * attention with "play".
+ */
+const PongRect PONG_MENU_RECT[MENU_COUNT] = {
+    [MENU_QUICK]  = {  12.0f,  46.0f, 296.0f, 40.0f },
+    [MENU_ROOM]   = {  12.0f,  92.0f, 296.0f, 40.0f },
+    [MENU_BOT]    = {  12.0f, 138.0f, 296.0f, 40.0f },
+    [MENU_SERVER] = {  12.0f, 186.0f, 180.0f, 30.0f },
+    [MENU_UPDATE] = { 198.0f, 186.0f, 110.0f, 30.0f },
+};
 
 bool pong_ui_hit(const PongRect *r, float x, float y)
 {
     return x >= r->x && x <= r->x + r->w && y >= r->y && y <= r->y + r->h;
+}
+
+int pong_ui_menu_hit(float x, float y)
+{
+    for (int i = 0; i < MENU_COUNT; i++) {
+        if (pong_ui_hit(&PONG_MENU_RECT[i], x, y)) return i;
+    }
+    return -1;
+}
+
+/** A filled panel with a 1px edge; the shape everything in the UI is built from. */
+static void panel(const PongRect *r, u32 fill, u32 edge)
+{
+    C2D_DrawRectSolid(r->x, r->y, 0.0f, r->w, r->h, fill);
+    C2D_DrawRectSolid(r->x, r->y, 0.0f, r->w, 1.0f, edge);
+    C2D_DrawRectSolid(r->x, r->y + r->h - 1.0f, 0.0f, r->w, 1.0f, edge);
+    C2D_DrawRectSolid(r->x, r->y, 0.0f, 1.0f, r->h, edge);
+    C2D_DrawRectSolid(r->x + r->w - 1.0f, r->y, 0.0f, 1.0f, r->h, edge);
+}
+
+/* ------------------------------------------------------------------ menu */
+
+typedef struct { const char *label; const char *hint; } MenuLabel;
+
+static const MenuLabel MENU_LABEL[MENU_COUNT] = {
+    [MENU_QUICK]  = { "QUICK MATCH", "play whoever is waiting" },
+    [MENU_ROOM]   = { "JOIN ROOM",   "same code = same game" },
+    [MENU_BOT]    = { "VS CPU",      "practice offline-ish" },
+    [MENU_SERVER] = { "SERVER",      NULL },
+    [MENU_UPDATE] = { "UPDATE",      NULL },
+};
+
+/*
+ * A little paddle-and-ball glyph, drawn with primitives.
+ *
+ * citro2d has no icon support and pulling in a spritesheet for five glyphs
+ * would mean a t3x pipeline and a bigger romfs, for something three rectangles
+ * express perfectly well.
+ */
+static void icon_pong(float x, float y, u32 a, u32 b)
+{
+    C2D_DrawRectSolid(x,          y,        0.0f, 2.0f, 12.0f, a);
+    C2D_DrawRectSolid(x + 12.0f,  y + 3.0f, 0.0f, 2.0f, 12.0f, b);
+    C2D_DrawRectSolid(x + 6.0f,   y + 7.0f, 0.0f, 3.0f, 3.0f,  CLR_BALL);
+}
+
+static void draw_menu(const PongHud *hud)
+{
+    /* Header. */
+    C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 36.0f, CLR_PANEL);
+    C2D_DrawRectSolid(0.0f, 35.0f, 0.0f, 320.0f, 1.0f, CLR_EDGE);
+    dyn("PONG MULTIPLAYER!", 0, 12.0f, 6.0f, 0.52f, CLR_TEXT);
+
+    char b[48];
+    snprintf(b, sizeof b, "build %lu", (unsigned long)hud->build_id);
+    dyn(b, C2D_AlignRight, 308.0f, 10.0f, 0.36f, CLR_DIM);
+
+    for (int i = 0; i < MENU_COUNT; i++) {
+        const PongRect *r = &PONG_MENU_RECT[i];
+        bool sel = (hud->menu_sel == i);
+        bool primary = (i <= MENU_BOT);
+
+        panel(r, sel ? CLR_BTN_SEL : CLR_BTN, sel ? CLR_ACCENT : CLR_EDGE);
+
+        /* An accent bar on the selected row, so the highlight reads instantly
+         * rather than relying on a subtle fill difference. */
+        if (sel) C2D_DrawRectSolid(r->x, r->y, 0.0f, 3.0f, r->h, CLR_ACCENT);
+
+        if (primary) {
+            icon_pong(r->x + 14.0f, r->y + (r->h - 15.0f) / 2.0f,
+                      sel ? CLR_ACCENT : CLR_DIM, sel ? CLR_ACCENT2 : CLR_DIM);
+            dyn(MENU_LABEL[i].label, 0, r->x + 38.0f, r->y + 6.0f, 0.5f,
+                sel ? CLR_TEXT : CLR_DIM);
+            if (MENU_LABEL[i].hint) {
+                dyn(MENU_LABEL[i].hint, 0, r->x + 38.0f, r->y + 23.0f, 0.34f, CLR_DIM);
+            }
+        } else {
+            dyn(MENU_LABEL[i].label, C2D_AlignCenter,
+                r->x + r->w / 2.0f, r->y + 8.0f, 0.42f, sel ? CLR_TEXT : CLR_DIM);
+        }
+    }
+
+    /* The server this will connect to -- the single most useful thing to see
+     * before pressing anything. */
+    if (hud->server_addr && hud->server_addr[0]) {
+        dyn_wrap(hud->server_addr, 0, 20.0f, 195.0f, 0.34f, CLR_DIM, 164.0f);
+    }
+
+    if (hud->message && hud->message[0]) {
+        dyn_wrap(hud->message, 0, 10.0f, 222.0f, 0.34f, CLR_WARN, 300.0f);
+    } else {
+        dyn("D-PAD + A, or tap", C2D_AlignCenter, 160.0f, 224.0f, 0.32f, CLR_DIM);
+    }
 }
 
 /* ------------------------------------------------------------------- top */
@@ -145,15 +256,47 @@ static void draw_playfield(const PongView *view, const PongHud *hud)
     }
 }
 
+/*
+ * A dim demo rally behind the title.
+ *
+ * Purely decorative and purely local -- it is not the simulation and never
+ * touches the network. Integer-free on purpose: nothing here has to agree with
+ * the server, so readability wins over the fixed-point discipline the real
+ * simulation needs.
+ */
+static void draw_attract(const PongHud *hud)
+{
+    float t = (float)hud->frame;
+    float bx = 200.0f + 150.0f * sinf(t * 0.013f);
+    float by = 120.0f + 80.0f  * sinf(t * 0.021f);
+
+    /* Paddles lazily track the ball, always a little behind. */
+    float ly = 120.0f + 70.0f * sinf(t * 0.021f - 0.6f);
+    float ry = 120.0f + 70.0f * sinf(t * 0.021f - 1.1f);
+
+    u32 dim  = C2D_Color32(0x12, 0x20, 0x2c, 0xFF);
+    u32 dim2 = C2D_Color32(0x22, 0x18, 0x28, 0xFF);
+
+    for (int y = 0; y < 240; y += 16) {
+        C2D_DrawRectSolid(199.0f, (float)y, 0.0f, 2.0f, 9.0f,
+                          C2D_Color32(0x11, 0x1c, 0x24, 0xFF));
+    }
+    C2D_DrawRectSolid(24.0f,  ly - 20.0f, 0.0f, 5.0f, 40.0f, dim);
+    C2D_DrawRectSolid(371.0f, ry - 20.0f, 0.0f, 5.0f, 40.0f, dim2);
+    C2D_DrawCircleSolid(bx, by, 0.0f, 4.0f, C2D_Color32(0x1e, 0x2c, 0x38, 0xFF));
+}
+
 static void draw_top(const PongView *view, const PongHud *hud)
 {
     switch (hud->screen) {
     case SCREEN_TITLE:
+        draw_attract(hud);
         C2D_DrawText(&s_title, C2D_AlignCenter | C2D_WithColor,
-                     200.0f, 70.0f, 0.5f, 0.9f, 0.9f, CLR_TEXT);
+                     200.0f, 78.0f, 0.5f, 0.9f, 0.9f, CLR_TEXT);
+        dyn("cross-play with any browser",
+            C2D_AlignCenter, 200.0f, 112.0f, 0.42f, CLR_DIM);
         C2D_DrawText(&s_pressA, C2D_AlignRight | C2D_WithColor,
                      392.0f, 214.0f, 0.5f, 0.42f, 0.42f, CLR_DIM);
-        dyn("X = check for updates", C2D_AlignCenter, 200.0f, 150.0f, 0.42f, CLR_DIM);
         break;
 
     case SCREEN_CONNECTING:
@@ -164,11 +307,18 @@ static void draw_top(const PongView *view, const PongHud *hud)
         break;
 
     case SCREEN_QUEUED:
-        C2D_DrawText(&s_title, C2D_AlignCenter | C2D_WithColor,
-                     200.0f, 60.0f, 0.5f, 0.8f, 0.8f, CLR_TEXT);
-        dyn("WAITING FOR AN OPPONENT", C2D_AlignCenter, 200.0f, 120.0f, 0.6f, CLR_TEXT);
-        dyn("a CPU opponent is offered after 15s",
-            C2D_AlignCenter, 200.0f, 145.0f, 0.42f, CLR_DIM);
+        draw_attract(hud);
+        if (hud->room_code && hud->room_code[0]) {
+            /* Big, because the whole point is reading it to someone else. */
+            dyn("ROOM CODE", C2D_AlignCenter, 200.0f, 52.0f, 0.5f, CLR_DIM);
+            dyn(hud->room_code, C2D_AlignCenter, 200.0f, 78.0f, 1.6f, CLR_ACCENT);
+            dyn("enter this on the other device",
+                C2D_AlignCenter, 200.0f, 150.0f, 0.44f, CLR_TEXT);
+        } else {
+            dyn("WAITING FOR AN OPPONENT", C2D_AlignCenter, 200.0f, 100.0f, 0.62f, CLR_TEXT);
+            dyn("a CPU opponent is offered after 15s",
+                C2D_AlignCenter, 200.0f, 132.0f, 0.42f, CLR_DIM);
+        }
         break;
 
     case SCREEN_ERROR:
@@ -226,37 +376,7 @@ static void draw_bottom(const PongView *view, const PongHud *hud)
             C2D_AlignCenter, 160.0f, 60.0f, 0.38f, CLR_DIM);
         dyn("START = quit", C2D_AlignCenter, 160.0f, 216.0f, 0.38f, CLR_DIM);
     } else if (hud->screen == SCREEN_TITLE) {
-        /* Server address dialog. One field, one button -- Direct Connect. */
-        dyn("SERVER ADDRESS", 0, 16.0f, 54.0f, 0.42f, CLR_DIM);
-
-        const PongRect *a = &PONG_UI_ADDR_BOX;
-        C2D_DrawRectSolid(a->x, a->y, 0.0f, a->w, a->h, C2D_Color32(0x0f, 0x16, 0x1e, 0xFF));
-        C2D_DrawRectSolid(a->x, a->y, 0.0f, a->w, 1.0f, CLR_NET);
-        C2D_DrawRectSolid(a->x, a->y + a->h - 1.0f, 0.0f, a->w, 1.0f, CLR_NET);
-        C2D_DrawRectSolid(a->x, a->y, 0.0f, 1.0f, a->h, CLR_NET);
-        C2D_DrawRectSolid(a->x + a->w - 1.0f, a->y, 0.0f, 1.0f, a->h, CLR_NET);
-
-        dyn(hud->server_addr && hud->server_addr[0] ? hud->server_addr : "(not set)",
-            0, a->x + 10.0f, a->y + 12.0f, 0.5f, CLR_TEXT);
-        dyn("tap to edit", C2D_AlignRight, a->x + a->w - 8.0f, a->y + 28.0f, 0.34f, CLR_DIM);
-
-        /* CONNECT, pulsing so it reads as the primary action. */
-        const PongRect *b = &PONG_UI_CONNECT_BTN;
-        bool on = ((hud->frame / 30) % 2) == 0;
-        u32 border = on ? CLR_MINE : CLR_NET;
-        C2D_DrawRectSolid(b->x, b->y, 0.0f, b->w, b->h, C2D_Color32(0x0c, 0x18, 0x20, 0xFF));
-        C2D_DrawRectSolid(b->x, b->y, 0.0f, b->w, 2.0f, border);
-        C2D_DrawRectSolid(b->x, b->y + b->h - 2.0f, 0.0f, b->w, 2.0f, border);
-        C2D_DrawRectSolid(b->x, b->y, 0.0f, 2.0f, b->h, border);
-        C2D_DrawRectSolid(b->x + b->w - 2.0f, b->y, 0.0f, 2.0f, b->h, border);
-        dyn("CONNECT", C2D_AlignCenter, 160.0f, b->y + 16.0f, 0.6f, CLR_TEXT);
-
-        dyn("A = connect   X = check for updates",
-            C2D_AlignCenter, 160.0f, 186.0f, 0.36f, CLR_DIM);
-
-        if (hud->message && hud->message[0]) {
-            dyn_wrap(hud->message, 0, 8.0f, 198.0f, 0.34f, CLR_WARN, 304.0f);
-        }
+        draw_menu(hud);
     } else {
         C2D_DrawText(&s_tapToStart, C2D_AlignCenter | C2D_WithColor,
                      160.0f, 96.0f, 0.5f, 0.55f, 0.55f, CLR_TEXT);

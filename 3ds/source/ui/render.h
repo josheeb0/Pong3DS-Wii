@@ -17,12 +17,28 @@
 
 typedef struct { float x, y, w, h; } PongRect;
 
-/* Title-screen touch targets, shared by the renderer and the input handler so
- * a visible button is always a pressable one. */
-extern const PongRect PONG_UI_ADDR_BOX;
-extern const PongRect PONG_UI_CONNECT_BTN;
+/*
+ * Menu items, in the order they appear.
+ *
+ * The renderer and the input handler share this list and the rect table below,
+ * so a button that is drawn is always a button that can be pressed -- the two
+ * cannot drift into disagreeing about where things are.
+ */
+typedef enum {
+    MENU_QUICK = 0,   /* quick match: pair with anyone, 3DS vs browser preferred */
+    MENU_ROOM,        /* join a room by code, so you can play someone specific */
+    MENU_BOT,         /* practice against the CPU */
+    MENU_SERVER,      /* edit the server address */
+    MENU_UPDATE,      /* check for a newer build */
+    MENU_COUNT
+} PongMenuItem;
+
+extern const PongRect PONG_MENU_RECT[MENU_COUNT];
 
 bool pong_ui_hit(const PongRect *r, float x, float y);
+
+/** Which menu item is under a touch, or -1. */
+int pong_ui_menu_hit(float x, float y);
 
 typedef enum {
     SCREEN_TITLE = 0,
@@ -35,6 +51,9 @@ typedef enum {
 
 typedef struct {
     PongScreen  screen;
+    int         menu_sel;      /* highlighted item, for d-pad navigation */
+    const char *room_code;     /* shown while waiting, so it can be read out */
+    uint32_t    build_id;
     const char *status_line;   /* transport description */
     const char *detail_line;   /* rtt / hz / opponent */
     const char *message;       /* errors, prompts */
