@@ -74,8 +74,9 @@ bool pong_addr_parse(const char *input, PongNetConfig *net, char *err, size_t er
     char *colon = strrchr(host, ':');
     if (colon) {
         *colon = '\0';
-        long p = strtol(colon + 1, NULL, 10);
-        if (p < 1 || p > 65535) {
+        char *end = NULL;
+        long p = strtol(colon + 1, &end, 10);
+        if (end == colon + 1 || *end != '\0' || p < 1 || p > 65535) {
             snprintf(err, errcap, "port must be 1-65535");
             return false;
         }
