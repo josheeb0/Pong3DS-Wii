@@ -48,6 +48,21 @@ time. If they do not match the run you expected, the pull did not happen.
 Pin a specific build instead of `latest` by using its tag:
 `ghcr.io/johndoe6345789/pong3ds:sha-abc1234`.
 
+### Or use compose
+
+`compose.yml` at the repo root does the same thing and is easier to keep
+correct, since the ports, environment and health check live in a file rather
+than in a shell command someone has to retype:
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+Note that `docker compose up` genuinely replaces the container, which
+`docker restart` does not -- restarting reuses the old image and produces a
+deploy that appears to work and changes nothing. Check `/healthz` afterwards
+either way.
+
 ### The 3DS build travels inside the image
 
 CI builds the console client and copies it into the image before publishing, so
