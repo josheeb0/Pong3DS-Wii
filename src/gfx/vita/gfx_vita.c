@@ -143,6 +143,12 @@ void pong_gfx_frame_end(void)
     vita2d_swap_buffers();
 }
 
+bool pong_gfx_text_input(bool enabled)
+{
+    (void)enabled;
+    return false;   /* the Vita opens its own IME instead */
+}
+
 void pong_gfx_output_size(int *w, int *h)
 {
     /* The handheld UI never asks; reported for completeness. */

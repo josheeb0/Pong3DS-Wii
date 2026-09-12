@@ -19,6 +19,12 @@ static bool s_ready = false;
 
 const char *pong_gfx_platform_name(void) { return "3ds"; }
 
+bool pong_gfx_text_input(bool enabled)
+{
+    (void)enabled;
+    return false;   /* the console opens swkbd instead */
+}
+
 void pong_gfx_output_size(int *w, int *h)
 {
     /* The handheld UI never asks; reported for completeness. */

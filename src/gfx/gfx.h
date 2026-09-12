@@ -80,6 +80,20 @@ void pong_gfx_request_size(int w, int h);
 
 /** Real pixel extent of the output, for PONG_SURFACE_FULL layout. */
 void pong_gfx_output_size(int *w, int *h);
+
+/**
+ * Turns text entry on or off.
+ *
+ * Through the seam because SDL3 starts text input against a specific WINDOW,
+ * and the window belongs to the backend -- the front end has no handle to pass
+ * and passing NULL silently does nothing, which is exactly the bug this
+ * replaces: typing into the server and name fields produced no characters on
+ * any desktop platform, with no error to notice.
+ *
+ * Returns false where the backend has no such concept, which the consoles do
+ * not: they open their own system keyboard instead.
+ */
+bool pong_gfx_text_input(bool enabled);
 void pong_gfx_exit(void);
 
 /** One frame, both surfaces. Draw between these. */

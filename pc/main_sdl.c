@@ -289,7 +289,12 @@ static void open_editor(App *a, int target)
     } else {
         a->edit_buf[0] = '\0';
     }
-    SDL_StartTextInput(NULL);
+    if (!pong_gfx_text_input(true)) {
+        /* Worth saying rather than leaving a field that swallows keystrokes. */
+        fprintf(stderr, "text input unavailable: %s\n", SDL_GetError());
+        snprintf(a->toast, sizeof a->toast, "text entry unavailable");
+        a->editing = false;
+    }
 }
 
 static void commit_editor(App *a)
@@ -313,7 +318,7 @@ static void commit_editor(App *a)
     }
     cfg_save(a);
     a->editing = false;
-    SDL_StopTextInput(NULL);
+    pong_gfx_text_input(false);
 
     if (a->edit_target == DESK_ITEM_ROOM && a->room[0]) {
         begin_connect(a, PONG_JOIN_MODE_ROOM_CODE);
@@ -351,6 +356,7 @@ int main(int argc, char **argv)
      * so the playfield can be captured without a server. */
     const char *shot = NULL;
     bool demo = false, autoplay = false, autobot = false, autoinput = false;
+    bool testedit = false;
     int shot_after = 8;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--shot") == 0 && i + 1 < argc) shot = argv[i + 1];
@@ -361,6 +367,9 @@ int main(int argc, char **argv)
          * the paddle is drawn from the server's snapshot, so if it moves, the
          * round trip works. */
         if (strcmp(argv[i], "--autoinput") == 0) autoinput = true;
+        /* Opens the name field at startup and prints whether SDL accepted it,
+         * so the fix can be checked without a person at a keyboard. */
+        if (strcmp(argv[i], "--testedit") == 0) testedit = true;
         if (strcmp(argv[i], "--frames") == 0 && i + 1 < argc) shot_after = atoi(argv[i + 1]);
         if (strcmp(argv[i], "--name") == 0 && i + 1 < argc)
             snprintf(app.name, sizeof app.name, "%s", argv[i + 1]);
@@ -396,6 +405,11 @@ int main(int argc, char **argv)
      * exercised from a script rather than by a person pressing Enter. */
     if (autoplay) begin_connect(&app, PONG_JOIN_MODE_QUICKMATCH);
     if (autobot)  begin_connect(&app, PONG_JOIN_MODE_VS_BOT);
+    if (testedit) {
+        app.hud.sel = DESK_ITEM_NAME;
+        open_editor(&app, DESK_ITEM_NAME);
+        printf("text input started: %s\n", app.editing ? "YES" : "NO");
+    }
 
     int frames = 0;
     bool running = true;
@@ -445,7 +459,7 @@ int main(int argc, char **argv)
                     if (e.key.key == SDLK_RETURN) commit_editor(&app);
                     else if (e.key.key == SDLK_ESCAPE) {
                         app.editing = false;
-                        SDL_StopTextInput(NULL);
+                        pong_gfx_text_input(false);
                     } else if (e.key.key == SDLK_BACKSPACE) {
                         size_t n = strlen(app.edit_buf);
                         if (n) app.edit_buf[n - 1] = '\0';

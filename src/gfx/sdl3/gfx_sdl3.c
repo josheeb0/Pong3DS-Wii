@@ -130,6 +130,14 @@ static bool build_font(void)
 
 static int s_req_w = 1280, s_req_h = 560;
 
+bool pong_gfx_text_input(bool enabled)
+{
+    if (!s_win) return false;
+    /* The window argument is the whole point: SDL3 scopes text input to a
+     * window, and NULL is accepted and does nothing. */
+    return enabled ? SDL_StartTextInput(s_win) : SDL_StopTextInput(s_win);
+}
+
 void pong_gfx_output_size(int *w, int *h)
 {
     int ow = 0, oh = 0;
