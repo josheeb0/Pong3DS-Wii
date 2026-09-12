@@ -15,7 +15,7 @@ CLIENT := ../source/game/client.c
 
 .PHONY: all run play addr gh clean
 
-all: test_proto test_play test_addr test_ghparse
+all: test_proto test_play test_addr test_ghparse test_interp
 
 test_proto: test_proto.c $(PROTO) ../source/net/pong_proto.h golden_data.h
 	$(CC) $(CFLAGS) -o $@ test_proto.c $(PROTO) $(LDFLAGS)
@@ -23,12 +23,14 @@ test_proto: test_proto.c $(PROTO) ../source/net/pong_proto.h golden_data.h
 test_play: test_play.c $(PROTO) $(CLIENT) ../source/game/client.h
 	$(CC) $(CFLAGS) -I../source/net -I../source/game -o $@ test_play.c $(PROTO) $(CLIENT) $(LDFLAGS)
 
-run: test_proto test_addr test_ghparse
+run: test_proto test_addr test_ghparse test_interp
 	./test_proto
 	@echo ""
 	./test_addr
 	@echo ""
 	./test_ghparse
+	@echo ""
+	./test_interp
 
 play: test_play
 	./test_play $(ARGS)
@@ -44,6 +46,15 @@ addr: test_addr
 test_ghparse: test_ghparse.c ../source/util/ghparse.c ../source/util/updatetarget.c ../source/util/ghparse.h
 	$(CC) $(CFLAGS) -I../source/util -I../source/net -o $@ \
 	  test_ghparse.c ../source/util/ghparse.c ../source/util/updatetarget.c $(LDFLAGS)
+
+# client.c has no libctru dependency, so the motion a player actually sees can
+# be asserted here instead of judged by eye on hardware.
+test_interp: test_interp.c $(PROTO) $(CLIENT) ../source/game/client.h
+	$(CC) $(CFLAGS) -I../source/net -I../source/game -o $@ \
+	  test_interp.c $(PROTO) $(CLIENT) $(LDFLAGS)
+
+interp: test_interp
+	./test_interp
 
 gh: test_ghparse
 	./test_ghparse

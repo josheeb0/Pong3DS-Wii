@@ -4,9 +4,22 @@
 #include <string.h>
 #include <math.h>
 
-/* Q4 field units -> top-screen pixels: /16 for fixed point, /2 for the
- * 800x480 -> 400x240 mapping. One shift, exact at both extremes. */
-#define TOPX(q) ((float)((q) >> (PONG_Q4_SHIFT + 1)))
+/*
+ * Q4 field units -> top-screen pixels: /16 for fixed point, /2 for the
+ * 800x480 -> 400x240 mapping.
+ *
+ * A float divide, NOT the shift this used to be. The shift truncated every
+ * position to a whole pixel, so a ball crossing the screen moved in integer
+ * steps and visibly stair-stepped even when the netcode was feeding perfectly
+ * smooth input -- half of "it looks jagged" was here rather than in the
+ * network. citro2d takes floats and the GPU interpolates, so keeping the
+ * sub-pixel part costs nothing and is the single largest smoothness win
+ * available.
+ *
+ * 32 = 16 (Q4) * 2 (field -> screen), exact in binary, so this is still exact
+ * at both extremes.
+ */
+#define TOPX(q) ((float)(q) * (1.0f / 32.0f))
 
 #define CLR_BG        C2D_Color32(0x07, 0x09, 0x0d, 0xFF)
 #define CLR_NET       C2D_Color32(0x1e, 0x3a, 0x4d, 0xFF)
@@ -14,7 +27,12 @@
 #define CLR_THEIRS    C2D_Color32(0xff, 0x9d, 0xe2, 0xFF)
 #define CLR_BALL      C2D_Color32(0xff, 0xff, 0xff, 0xFF)
 #define CLR_TEXT      C2D_Color32(0xdc, 0xe9, 0xf5, 0xFF)
-#define CLR_DIM       C2D_Color32(0x6a, 0x86, 0x9b, 0xFF)
+/* Lifted from 0x6a869b. The New 3DS XL stretches the same 320x240 panel over
+ * 4.18 inches, so it is the lowest pixel density of any 3DS -- text that read
+ * fine in an emulator at 3x is mush on the hardware. Secondary text needs real
+ * contrast, not a polite grey. */
+#define CLR_DIM       C2D_Color32(0x95, 0xad, 0xc0, 0xFF)
+#define CLR_FAINT     C2D_Color32(0x5c, 0x74, 0x87, 0xFF)
 #define CLR_WARN      C2D_Color32(0xff, 0xc8, 0x78, 0xFF)
 #define CLR_SCORE     C2D_Color32(0x2a, 0x44, 0x5a, 0xFF)
 #define CLR_PANEL     C2D_Color32(0x0d, 0x11, 0x17, 0xFF)
@@ -26,6 +44,11 @@
 #define CLR_GOOD      C2D_Color32(0x7d, 0xff, 0xa8, 0xFF)
 #define CLR_HEADER    C2D_Color32(0x0a, 0x12, 0x19, 0xFF)
 #define CLR_TRAIL     C2D_Color32(0x16, 0x24, 0x30, 0xFF)
+#define CLR_FIELD_HI  C2D_Color32(0x0d, 0x15, 0x1f, 0xFF)
+#define CLR_FIELD_LO  C2D_Color32(0x05, 0x07, 0x0b, 0xFF)
+#define CLR_GLOW_MINE C2D_Color32(0x7e, 0xe7, 0xff, 0x30)
+#define CLR_GLOW_THRS C2D_Color32(0xff, 0x9d, 0xe2, 0x30)
+#define CLR_BALL_GLOW C2D_Color32(0xff, 0xff, 0xff, 0x28)
 
 /* Blends two colours. Used for the selection animation, so the highlight
  * travels rather than snapping between rows -- motion is most of what makes an
@@ -108,18 +131,28 @@ static void dyn_wrap(const char *s, u32 flags, float x, float y, float scale,
  * button you can see but not press is a miserable bug to chase.
  */
 /*
- * Bottom screen is 320x240. Three primary actions get full-width rows big
- * enough to hit with a thumb; the two utility actions share a smaller row at
- * the bottom, because they are things you do rarely and should not compete for
- * attention with "play".
+ * Bottom screen is 320x240 on every 3DS -- the XL does not add pixels, it
+ * stretches the same panel over 4.18 inches. That makes it the least dense
+ * screen in the family (~132 PPI against ~165 on the original), so the limit on
+ * this layout is legibility per pixel, not space.
+ *
+ * Consequences, both learned the hard way on hardware:
+ *   - nothing below ~13px of text height is comfortably readable, which with
+ *     citro2d's system font (about 30px at scale 1.0) is a floor of ~0.44;
+ *   - a touch target under about 30px is awkward with a thumb, and this is a
+ *     screen people use with a thumb while holding the console.
+ *
+ * So: three tall primary rows, one utility row that still clears 30px, and a
+ * status line. Everything that used to be drawn at 0.29-0.38 is either bigger
+ * now or gone.
  */
 const PongRect PONG_MENU_RECT[MENU_COUNT] = {
-    [MENU_QUICK]  = {  12.0f,  46.0f, 296.0f, 40.0f },
-    [MENU_ROOM]   = {  12.0f,  92.0f, 296.0f, 40.0f },
-    [MENU_BOT]    = {  12.0f, 138.0f, 296.0f, 40.0f },
-    [MENU_SERVER] = {  12.0f, 184.0f,  96.0f, 28.0f },
-    [MENU_SOURCE] = { 114.0f, 184.0f, 100.0f, 28.0f },
-    [MENU_UPDATE] = { 220.0f, 184.0f,  88.0f, 28.0f },
+    [MENU_QUICK]  = {  10.0f,  36.0f, 300.0f, 44.0f },
+    [MENU_ROOM]   = {  10.0f,  84.0f, 300.0f, 44.0f },
+    [MENU_BOT]    = {  10.0f, 132.0f, 300.0f, 44.0f },
+    [MENU_SERVER] = {  10.0f, 180.0f,  96.0f, 30.0f },
+    [MENU_SOURCE] = { 112.0f, 180.0f,  96.0f, 30.0f },
+    [MENU_UPDATE] = { 214.0f, 180.0f,  96.0f, 30.0f },
 };
 
 bool pong_ui_hit(const PongRect *r, float x, float y)
@@ -199,19 +232,20 @@ static void draw_menu(const PongHud *hud)
     sel_y += (target->y - sel_y) * 0.35f;
 
     /* Header. */
-    C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 32.0f, CLR_HEADER);
+    C2D_DrawRectangle(0.0f, 0.0f, 0.0f, 320.0f, 32.0f,
+                      CLR_HEADER, CLR_HEADER, CLR_BG, CLR_BG);
     C2D_DrawRectSolid(0.0f, 31.0f, 0.0f, 320.0f, 1.0f, CLR_ACCENT);
-    dyn("PONG", 0, 12.0f, 5.0f, 0.62f, CLR_ACCENT);
-    dyn("MULTIPLAYER", 0, 62.0f, 9.0f, 0.44f, CLR_TEXT);
+    dyn("PONG", 0, 12.0f, 3.0f, 0.72f, CLR_ACCENT);
+    dyn("MULTIPLAYER", 0, 70.0f, 9.0f, 0.5f, CLR_TEXT);
 
     char b[48];
     if (hud->build_id == 0) {
         /* A local build is not a release and should never be mistaken for one. */
-        snprintf(b, sizeof b, "DEV BUILD");
-        dyn(b, C2D_AlignRight, 310.0f, 10.0f, 0.38f, CLR_WARN);
+        snprintf(b, sizeof b, "DEV");
+        dyn(b, C2D_AlignRight, 310.0f, 9.0f, 0.5f, CLR_WARN);
     } else {
         snprintf(b, sizeof b, "BUILD %lu", (unsigned long)hud->build_id);
-        dyn(b, C2D_AlignRight, 310.0f, 10.0f, 0.38f, CLR_ACCENT);
+        dyn(b, C2D_AlignRight, 310.0f, 9.0f, 0.5f, CLR_ACCENT);
     }
 
     for (int i = 0; i < MENU_COUNT; i++) {
@@ -222,78 +256,131 @@ static void draw_menu(const PongHud *hud)
         panel(r, sel ? CLR_BTN_SEL : CLR_BTN, sel ? CLR_ACCENT : CLR_EDGE);
 
         if (primary) {
-            icon_for(i, r->x + 14.0f, r->y + (r->h - 14.0f) / 2.0f,
+            icon_for(i, r->x + 16.0f, r->y + (r->h - 14.0f) / 2.0f,
                      sel ? CLR_ACCENT : CLR_DIM, sel ? CLR_ACCENT2 : CLR_DIM);
-            dyn(MENU_LABEL[i].label, 0, r->x + 40.0f, r->y + 5.0f, 0.5f,
+            dyn(MENU_LABEL[i].label, 0, r->x + 46.0f, r->y + 4.0f, 0.6f,
                 sel ? CLR_TEXT : CLR_DIM);
             if (MENU_LABEL[i].hint) {
-                dyn(MENU_LABEL[i].hint, 0, r->x + 40.0f, r->y + 22.0f, 0.33f,
-                    sel ? CLR_DIM : mix(CLR_DIM, CLR_BG, 0.45f));
+                dyn(MENU_LABEL[i].hint, 0, r->x + 46.0f, r->y + 24.0f, 0.44f,
+                    sel ? CLR_DIM : CLR_FAINT);
             }
             /* A chevron on the active row, pointing at the thing A will do. */
             if (sel) {
-                float cx = r->x + r->w - 18.0f, cy = r->y + r->h / 2.0f;
-                for (int k = 0; k < 5; k++) {
-                    C2D_DrawRectSolid(cx + k, cy - 5.0f + k, 0.0f, 1.5f, 2.0f, CLR_ACCENT);
-                    C2D_DrawRectSolid(cx + k, cy + 4.0f - k, 0.0f, 1.5f, 2.0f, CLR_ACCENT);
+                float cx = r->x + r->w - 20.0f, cy = r->y + r->h / 2.0f;
+                for (int k = 0; k < 6; k++) {
+                    C2D_DrawRectSolid(cx + k, cy - 6.0f + k, 0.0f, 2.0f, 2.5f, CLR_ACCENT);
+                    C2D_DrawRectSolid(cx + k, cy + 5.0f - k, 0.0f, 2.0f, 2.5f, CLR_ACCENT);
                 }
             }
         } else {
             dyn(MENU_LABEL[i].label, C2D_AlignCenter,
-                r->x + r->w / 2.0f, r->y + 7.0f, 0.42f, sel ? CLR_TEXT : CLR_DIM);
+                r->x + r->w / 2.0f, r->y + 7.0f, 0.5f, sel ? CLR_TEXT : CLR_DIM);
         }
     }
 
     /* The travelling highlight: a bar down the left edge of the active row. */
-    C2D_DrawRectSolid(12.0f, sel_y, 0.0f, 3.0f,
+    C2D_DrawRectSolid(10.0f, sel_y, 0.0f, 3.0f,
                       PONG_MENU_RECT[hud->menu_sel].h, CLR_ACCENT);
 
-    if (hud->server_addr && hud->server_addr[0]) {
-        dyn_wrap(hud->server_addr, 0, 14.0f, 214.0f, 0.3f, CLR_DIM, 190.0f);
-    }
-    if (hud->update_src && hud->update_src[0]) {
-        char us[72];
-        snprintf(us, sizeof us, "updates: %s", hud->update_src);
-        dyn(us, C2D_AlignRight, 308.0f, 214.0f, 0.3f, CLR_DIM);
-    }
-
+    /*
+     * Status line.
+     *
+     * One line, one job. This used to be three separate rows at 0.29-0.33 --
+     * the server address, the update source, and a build/protocol footer -- and
+     * the address in particular ran off the side of the screen where it was
+     * needed most. A message, when there is one, replaces the lot: nothing here
+     * matters while the console is trying to tell you something.
+     */
     if (hud->message && hud->message[0]) {
-        dyn_wrap(hud->message, 0, 10.0f, 226.0f, 0.3f, CLR_WARN, 300.0f);
-    } else {
-        char v[64];
-        if (hud->build_id == 0) {
-            snprintf(v, sizeof v, "dev build  ·  protocol v%d  ·  D-PAD + A or tap",
-                     PONG_PROTOCOL_VERSION);
-        } else {
-            snprintf(v, sizeof v, "build %lu  ·  protocol v%d  ·  D-PAD + A or tap",
-                     (unsigned long)hud->build_id, PONG_PROTOCOL_VERSION);
-        }
-        dyn(v, C2D_AlignCenter, 160.0f, 228.0f, 0.29f, mix(CLR_DIM, CLR_BG, 0.25f));
+        dyn_wrap(hud->message, 0, 10.0f, 214.0f, 0.44f, CLR_WARN, 300.0f);
+    } else if (hud->server_addr && hud->server_addr[0]) {
+        dyn("SERVER", 0, 10.0f, 215.0f, 0.44f, CLR_FAINT);
+        dyn_wrap(hud->server_addr, 0, 62.0f, 213.0f, 0.46f, CLR_DIM, 248.0f);
     }
 }
 
 /* ------------------------------------------------------------------- top */
 
+/*
+ * Ball trail.
+ *
+ * Kept here rather than in the client because it is presentation only: nothing
+ * else in the program has any use for where the ball was half a second ago, and
+ * putting it in the shared view would imply the simulation cared.
+ *
+ * Screen coordinates, not field coordinates, so a resolution change would
+ * invalidate it -- which is fine, there is exactly one resolution.
+ */
+#define TRAIL_LEN 14
+static float s_trail_x[TRAIL_LEN], s_trail_y[TRAIL_LEN];
+static int   s_trail_head = 0;
+static bool  s_trail_live = false;
+
+static void trail_reset(float x, float y)
+{
+    for (int i = 0; i < TRAIL_LEN; i++) { s_trail_x[i] = x; s_trail_y[i] = y; }
+    s_trail_head = 0;
+    s_trail_live = true;
+}
+
+static void trail_push(float x, float y)
+{
+    if (!s_trail_live) { trail_reset(x, y); return; }
+    /* A serve or a goal teleports the ball. Dragging a trail across that reads
+     * as a glitch, so a big jump restarts the trail rather than smearing. */
+    int prev = (s_trail_head + TRAIL_LEN - 1) % TRAIL_LEN;
+    float dx = x - s_trail_x[prev], dy = y - s_trail_y[prev];
+    if (dx * dx + dy * dy > 60.0f * 60.0f) { trail_reset(x, y); return; }
+    s_trail_x[s_trail_head] = x;
+    s_trail_y[s_trail_head] = y;
+    s_trail_head = (s_trail_head + 1) % TRAIL_LEN;
+}
+
+/** Paddle with a soft glow behind it, so it reads as lit rather than painted. */
+static void draw_paddle(float x, float y, float w, float h, u32 body, u32 glow)
+{
+    C2D_DrawRectSolid(x - 3.0f, y - 3.0f, 0.0f, w + 6.0f, h + 6.0f, glow);
+    C2D_DrawRectSolid(x - 1.5f, y - 1.5f, 0.0f, w + 3.0f, h + 3.0f, glow);
+    /* Vertical sheen: brighter in the middle, so a flat rectangle gets some
+     * shape without needing a texture. */
+    C2D_DrawRectangle(x, y, 0.0f, w, h * 0.5f, mix(body, CLR_BG, 0.35f), mix(body, CLR_BG, 0.35f), body, body);
+    C2D_DrawRectangle(x, y + h * 0.5f, 0.0f, w, h * 0.5f, body, body, mix(body, CLR_BG, 0.35f), mix(body, CLR_BG, 0.35f));
+}
+
 static void draw_playfield(const PongView *view, const PongHud *hud)
 {
-    /* Centre net. */
-    for (int y = 0; y < 240; y += 16) {
-        C2D_DrawRectSolid(199.0f, (float)y, 0.0f, 2.0f, 9.0f, CLR_NET);
+    /* Field: a shallow vertical gradient rather than flat black, which gives
+     * the play area an edge without drawing a box around it. */
+    C2D_DrawRectangle(0.0f, 0.0f, 0.0f, 400.0f, 240.0f,
+                      CLR_FIELD_HI, CLR_FIELD_HI, CLR_FIELD_LO, CLR_FIELD_LO);
+
+    /* Goal lines. */
+    C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 1.0f, 240.0f, mix(CLR_MINE, CLR_BG, 0.55f));
+    C2D_DrawRectSolid(399.0f, 0.0f, 0.0f, 1.0f, 240.0f, mix(CLR_THEIRS, CLR_BG, 0.55f));
+
+    /* Centre net, fading toward the top and bottom so the eye is drawn to the
+     * middle of the field where the play is. */
+    for (int y = 4; y < 240; y += 15) {
+        float d = fabsf((float)y - 120.0f) / 120.0f;
+        C2D_DrawRectSolid(199.0f, (float)y, 0.0f, 2.0f, 8.0f,
+                          mix(CLR_NET, CLR_FIELD_LO, d * 0.75f));
     }
 
     if (!view || !view->valid) {
-        dyn("CONNECTING...", C2D_AlignCenter, 200.0f, 108.0f, 0.7f, CLR_TEXT);
+        dyn("CONNECTING...", C2D_AlignCenter, 200.0f, 104.0f, 0.75f, CLR_TEXT);
+        s_trail_live = false;
         return;
     }
 
-    /* Score, behind the play. */
+    /* Score, behind the play and deliberately large: it is the one thing you
+     * want to read without looking away from the ball. */
     char sc[16];
     snprintf(sc, sizeof sc, "%u", view->score_l);
-    dyn(sc, C2D_AlignCenter, 150.0f, 8.0f, 1.1f, CLR_SCORE);
+    dyn(sc, C2D_AlignCenter, 150.0f, 6.0f, 1.35f, CLR_SCORE);
     snprintf(sc, sizeof sc, "%u", view->score_r);
-    dyn(sc, C2D_AlignCenter, 250.0f, 8.0f, 1.1f, CLR_SCORE);
+    dyn(sc, C2D_AlignCenter, 250.0f, 6.0f, 1.35f, CLR_SCORE);
 
-    const float pw = (float)PONG_PADDLE_W / 2.0f;   /* field px -> screen px */
+    const float pw = (float)PONG_PADDLE_W / 2.0f;
     const float ph = (float)PONG_PADDLE_H / 2.0f;
 
     float lx = (float)PONG_PADDLE_X_L / 2.0f - pw / 2.0f;
@@ -301,30 +388,68 @@ static void draw_playfield(const PongView *view, const PongHud *hud)
     float ly = TOPX(view->left_y) - ph / 2.0f;
     float ry = TOPX(view->right_y) - ph / 2.0f;
 
-    C2D_DrawRectSolid(lx, ly, 0.0f, pw, ph, hud->my_side == 0 ? CLR_MINE : CLR_THEIRS);
-    C2D_DrawRectSolid(rx, ry, 0.0f, pw, ph, hud->my_side == 1 ? CLR_MINE : CLR_THEIRS);
+    bool mine_left = (hud->my_side == 0);
+    draw_paddle(lx, ly, pw, ph, mine_left ? CLR_MINE : CLR_THEIRS,
+                mine_left ? CLR_GLOW_MINE : CLR_GLOW_THRS);
+    draw_paddle(rx, ry, pw, ph, mine_left ? CLR_THEIRS : CLR_MINE,
+                mine_left ? CLR_GLOW_THRS : CLR_GLOW_MINE);
 
-    /* Phase banners. */
+    /* Phase banners, on a backing strip so they stay readable over the play. */
+    const char *banner = NULL;
+    u32 banner_clr = CLR_TEXT;
     if (view->state == PONG_MATCH_STATE_COUNTDOWN) {
-        dyn("GET READY", C2D_AlignCenter, 200.0f, 100.0f, 0.9f, CLR_TEXT);
+        banner = "GET READY";
     } else if (view->state == PONG_MATCH_STATE_GAME_OVER) {
-        bool won = (hud->my_side == 0) ? (view->score_l > view->score_r)
-                                       : (view->score_r > view->score_l);
-        dyn(won ? "YOU WIN!" : "YOU LOSE", C2D_AlignCenter, 200.0f, 100.0f, 0.9f,
-            won ? CLR_MINE : CLR_THEIRS);
+        bool won = mine_left ? (view->score_l > view->score_r)
+                             : (view->score_r > view->score_l);
+        banner = won ? "YOU WIN!" : "YOU LOSE";
+        banner_clr = won ? CLR_MINE : CLR_THEIRS;
     } else if (view->state == PONG_MATCH_STATE_OPP_LOST) {
-        dyn("OPPONENT LEFT", C2D_AlignCenter, 200.0f, 100.0f, 0.7f, CLR_WARN);
+        banner = "OPPONENT LEFT";
+        banner_clr = CLR_WARN;
+    }
+    if (banner) {
+        C2D_DrawRectSolid(0.0f, 96.0f, 0.0f, 400.0f, 44.0f,
+                          C2D_Color32(0x06, 0x0a, 0x0e, 0xD8));
+        C2D_DrawRectSolid(0.0f, 96.0f, 0.0f, 400.0f, 1.0f, banner_clr);
+        C2D_DrawRectSolid(0.0f, 139.0f, 0.0f, 400.0f, 1.0f, banner_clr);
+        dyn(banner, C2D_AlignCenter, 200.0f, 104.0f, 0.95f, banner_clr);
     }
 
-    /* Ball LAST: circles force a citro2d state change, so batching every other
-     * shape before them is measurably cheaper. */
-    if (view->state == PONG_MATCH_STATE_PLAY || view->state == PONG_MATCH_STATE_GOAL_FREEZE) {
-        C2D_DrawCircleSolid(TOPX(view->ball_x), TOPX(view->ball_y), 0.0f,
-                            (float)PONG_BALL_R / 2.0f, CLR_BALL);
+    /* Ball and its trail LAST: circles force a citro2d state change, so every
+     * other shape batches ahead of them. The trail is rectangles for the same
+     * reason -- fourteen circles a frame is not worth what it costs. */
+    if (view->state == PONG_MATCH_STATE_PLAY ||
+        view->state == PONG_MATCH_STATE_GOAL_FREEZE) {
+        float bx = TOPX(view->ball_x), by = TOPX(view->ball_y);
+        float br = (float)PONG_BALL_R / 2.0f;
+
+        if (view->state == PONG_MATCH_STATE_PLAY) trail_push(bx, by);
+
+        for (int i = 0; i < TRAIL_LEN; i++) {
+            int idx = (s_trail_head + i) % TRAIL_LEN;
+            float age = (float)i / (float)TRAIL_LEN;    /* 0 oldest, 1 newest */
+            float sz = br * (0.25f + 0.65f * age);
+            u32 c = C2D_Color32(0xff, 0xff, 0xff, (u8)(age * age * 70.0f));
+            C2D_DrawRectSolid(s_trail_x[idx] - sz, s_trail_y[idx] - sz, 0.0f,
+                              sz * 2.0f, sz * 2.0f, c);
+        }
+
+        C2D_DrawCircleSolid(bx, by, 0.0f, br * 2.2f, CLR_BALL_GLOW);
+        C2D_DrawCircleSolid(bx, by, 0.0f, br * 1.5f, CLR_BALL_GLOW);
+        C2D_DrawCircleSolid(bx, by, 0.0f, br, CLR_BALL);
+    } else {
+        s_trail_live = false;
     }
 
+    /*
+     * Starved means we are drawing a predicted ball because nothing has
+     * arrived. Worth surfacing -- if the ball looks wrong, this says whether
+     * the network or the game is responsible -- but small, because it is
+     * diagnostic and the match is not.
+     */
     if (view->starved) {
-        C2D_DrawCircleSolid(390.0f, 10.0f, 0.0f, 3.0f, CLR_WARN);
+        C2D_DrawCircleSolid(391.0f, 9.0f, 0.0f, 3.5f, CLR_WARN);
     }
 }
 
@@ -384,17 +509,17 @@ static void draw_top(const PongView *view, const PongHud *hud)
         dyn("PONG", C2D_AlignCenter, 200.0f, 66.0f, 1.5f, CLR_ACCENT);
         dyn("M U L T I P L A Y E R", C2D_AlignCenter, 200.0f, 108.0f, 0.5f, CLR_TEXT);
         dyn("cross-play with any browser",
-            C2D_AlignCenter, 200.0f, 146.0f, 0.4f, CLR_DIM);
+            C2D_AlignCenter, 200.0f, 146.0f, 0.46f, CLR_DIM);
         {
             char vb[64];
             if (hud->build_id == 0) snprintf(vb, sizeof vb, "DEV BUILD");
             else snprintf(vb, sizeof vb, "BUILD %lu", (unsigned long)hud->build_id);
-            dyn(vb, 0, 10.0f, 214.0f, 0.4f,
+            dyn(vb, 0, 10.0f, 212.0f, 0.46f,
                 hud->build_id == 0 ? CLR_WARN : CLR_DIM);
         }
 
         C2D_DrawText(&s_pressA, C2D_AlignRight | C2D_WithColor,
-                     392.0f, 214.0f, 0.5f, 0.4f, 0.4f, CLR_DIM);
+                     392.0f, 212.0f, 0.5f, 0.46f, 0.46f, CLR_DIM);
 
         /*
          * Credit, top left. It sits over the attract rally rather than inside
@@ -407,7 +532,7 @@ static void draw_top(const PongView *view, const PongHud *hud)
          * oversized box.
          */
         {
-            const float cx = 8.0f, cy = 6.0f, sc = 0.4f, pad = 4.0f;
+            const float cx = 8.0f, cy = 6.0f, sc = 0.46f, pad = 4.0f;
             float tw = 0.0f, th = 0.0f;
             C2D_TextGetDimensions(&s_credit, sc, sc, &tw, &th);
             C2D_DrawRectSolid(cx - pad, cy - pad, 0.0f,
@@ -448,7 +573,7 @@ static void draw_top(const PongView *view, const PongHud *hud)
             }
 
             dyn("enter this code on the other device",
-                C2D_AlignCenter, 200.0f, 134.0f, 0.42f, CLR_TEXT);
+                C2D_AlignCenter, 200.0f, 134.0f, 0.5f, CLR_TEXT);
 
             /* Three dots cycling: says "still waiting" without a spinner that
              * would need its own animation state. */
@@ -458,9 +583,9 @@ static void draw_top(const PongView *view, const PongHud *hud)
                                     i < phase ? CLR_ACCENT : CLR_EDGE);
             }
         } else {
-            dyn("WAITING FOR AN OPPONENT", C2D_AlignCenter, 200.0f, 100.0f, 0.62f, CLR_TEXT);
+            dyn("WAITING FOR AN OPPONENT", C2D_AlignCenter, 200.0f, 98.0f, 0.7f, CLR_TEXT);
             dyn("a CPU opponent is offered after 15s",
-                C2D_AlignCenter, 200.0f, 132.0f, 0.42f, CLR_DIM);
+                C2D_AlignCenter, 200.0f, 134.0f, 0.5f, CLR_DIM);
         }
         break;
 
@@ -470,13 +595,13 @@ static void draw_top(const PongView *view, const PongHud *hud)
          * rather than by guessing. A fallback's error alone is not enough. */
         if (hud->diag && hud->diag[0]) {
             /* Top screen is 400 wide; leave a 12px margin each side. */
-            dyn_wrap(hud->diag, 0, 12.0f, 62.0f, 0.42f, CLR_DIM, 376.0f);
+            dyn_wrap(hud->diag, 0, 12.0f, 60.0f, 0.47f, CLR_DIM, 376.0f);
         } else if (hud->message) {
-            dyn_wrap(hud->message, 0, 12.0f, 100.0f, 0.42f, CLR_DIM, 376.0f);
+            dyn_wrap(hud->message, 0, 12.0f, 96.0f, 0.47f, CLR_DIM, 376.0f);
         }
         dyn("also written to sd:/3ds/pong3ds.log",
-            C2D_AlignCenter, 200.0f, 196.0f, 0.38f, CLR_DIM);
-        dyn("A / TAP = back", C2D_AlignCenter, 200.0f, 216.0f, 0.42f, CLR_DIM);
+            C2D_AlignCenter, 200.0f, 194.0f, 0.44f, CLR_FAINT);
+        dyn("A / TAP = back", C2D_AlignCenter, 200.0f, 214.0f, 0.5f, CLR_DIM);
         break;
 
     case SCREEN_PLAY:
@@ -493,38 +618,63 @@ static void draw_bottom(const PongView *view, const PongHud *hud)
 {
     (void)view;
 
-    /* Status panel. */
-    C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 46.0f, CLR_PANEL);
+    /* Status panel. Taller than it was, because the two lines inside it are
+     * bigger and cramping them was most of why they were hard to read. */
+    C2D_DrawRectangle(0.0f, 0.0f, 0.0f, 320.0f, 50.0f,
+                      CLR_PANEL, CLR_PANEL, CLR_BG, CLR_BG);
+    C2D_DrawRectSolid(0.0f, 49.0f, 0.0f, 320.0f, 1.0f, CLR_EDGE);
 
     if (hud->status_line && hud->status_line[0]) {
-        dyn_wrap(hud->status_line, 0, 8.0f, 6.0f, 0.42f, CLR_MINE, 250.0f);
+        dyn_wrap(hud->status_line, 0, 8.0f, 4.0f, 0.5f, CLR_MINE, 244.0f);
     }
     if (hud->detail_line && hud->detail_line[0]) {
-        dyn_wrap(hud->detail_line, 0, 8.0f, 24.0f, 0.40f, CLR_DIM, 304.0f);
+        dyn_wrap(hud->detail_line, 0, 8.0f, 26.0f, 0.46f, CLR_DIM, 304.0f);
     }
     if (hud->slow_mode) {
-        dyn("SLOW", C2D_AlignRight, 312.0f, 6.0f, 0.42f, CLR_WARN);
+        dyn("SLOW", C2D_AlignRight, 312.0f, 4.0f, 0.5f, CLR_WARN);
     }
 
     if (hud->screen == SCREEN_PLAY) {
-        /* Touch strip. Drawing the control surface explicitly makes it obvious
-         * the bottom screen is the paddle, which the sketch implies. */
-        C2D_DrawRectSolid(6.0f, 54.0f, 0.0f, 308.0f, 180.0f,
-                          C2D_Color32(0x0f, 0x16, 0x1e, 0xFF));
-        for (int i = 0; i < 5; i++) {
-            float y = 54.0f + 36.0f * (float)i;
-            C2D_DrawRectSolid(6.0f, y, 0.0f, 308.0f, 1.0f, C2D_Color32(0x16, 0x24, 0x30, 0xFF));
+        /*
+         * The touch strip IS the paddle, so it is drawn as a track with a
+         * marker showing where your paddle currently is. Previously it was an
+         * undifferentiated box with a caption, which said what to do without
+         * showing that it was doing anything.
+         */
+        const float ty = 56.0f, th = 176.0f;
+        C2D_DrawRectangle(6.0f, ty, 0.0f, 308.0f, th,
+                          C2D_Color32(0x0f, 0x18, 0x22, 0xFF),
+                          C2D_Color32(0x0f, 0x18, 0x22, 0xFF),
+                          C2D_Color32(0x0a, 0x10, 0x17, 0xFF),
+                          C2D_Color32(0x0a, 0x10, 0x17, 0xFF));
+        for (int i = 1; i < 5; i++) {
+            float y = ty + (th / 5.0f) * (float)i;
+            C2D_DrawRectSolid(6.0f, y, 0.0f, 308.0f, 1.0f, CLR_TRAIL);
         }
-        dyn("SLIDE TO MOVE  ·  D-PAD / CIRCLE PAD ALSO WORK",
-            C2D_AlignCenter, 160.0f, 60.0f, 0.38f, CLR_DIM);
-        dyn("START = quit", C2D_AlignCenter, 160.0f, 216.0f, 0.38f, CLR_DIM);
+
+        /* Marker at our own paddle's height, mapped from field to strip. */
+        if (view && view->valid) {
+            int32_t my_q4 = (hud->my_side == 0) ? view->left_y : view->right_y;
+            float f = (float)my_q4 / (float)PONG_FIELD_H_Q4;
+            if (f < 0.0f) f = 0.0f;
+            if (f > 1.0f) f = 1.0f;
+            float my = ty + f * th;
+            C2D_DrawRectSolid(6.0f, my - 9.0f, 0.0f, 308.0f, 18.0f,
+                              C2D_Color32(0x7e, 0xe7, 0xff, 0x22));
+            C2D_DrawRectSolid(6.0f, my - 1.5f, 0.0f, 308.0f, 3.0f, CLR_MINE);
+            C2D_DrawRectSolid(6.0f, my - 6.0f, 0.0f, 4.0f, 12.0f, CLR_MINE);
+            C2D_DrawRectSolid(310.0f, my - 6.0f, 0.0f, 4.0f, 12.0f, CLR_MINE);
+        }
+
+        dyn("SLIDE TO MOVE", C2D_AlignCenter, 160.0f, 236.0f - 16.0f, 0.46f, CLR_FAINT);
     } else if (hud->screen == SCREEN_TITLE) {
         draw_menu(hud);
     } else {
         C2D_DrawText(&s_tapToStart, C2D_AlignCenter | C2D_WithColor,
-                     160.0f, 96.0f, 0.5f, 0.55f, 0.55f, CLR_TEXT);
+                     160.0f, 92.0f, 0.5f, 0.6f, 0.6f, CLR_TEXT);
         if (hud->message && hud->message[0] && hud->screen != SCREEN_ERROR) {
-            dyn(hud->message, C2D_AlignCenter, 160.0f, 190.0f, 0.4f, CLR_DIM);
+            dyn_wrap(hud->message, C2D_AlignCenter, 160.0f, 186.0f, 0.48f,
+                     CLR_DIM, 300.0f);
         }
     }
 }

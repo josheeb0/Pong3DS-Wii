@@ -197,6 +197,35 @@ static int32_t lerp32(int32_t a, int32_t b, int32_t t_q8)
     return a + (int32_t)(((int64_t)(b - a) * t_q8) >> 8);
 }
 
+/*
+ * How far past the newest snapshot we are willing to predict, in Q8 ticks.
+ *
+ * 9 ticks is 150ms. Beyond that a prediction is more likely to be wrong than
+ * useful -- the ball may have hit a paddle we have not heard about -- and the
+ * correction when the truth arrives is worse than the stutter it was hiding.
+ */
+#define EXTRAPOLATE_MAX_Q8 (9 * 256)
+
+/*
+ * Folds a predicted Y back inside the walls, matching the server's reflection.
+ *
+ * A loop rather than a single fold: a long prediction at a steep angle can
+ * cross both walls, and folding once would leave the ball outside the field,
+ * which is far more visible than the stutter this exists to remove.
+ */
+static int32_t reflect_y(int32_t y)
+{
+    const int32_t lo = PONG_BALL_R << PONG_Q4_SHIFT;
+    const int32_t hi = PONG_FIELD_H_Q4 - lo;
+    if (hi <= lo) return y;
+    for (int guard = 0; guard < 8; guard++) {
+        if (y < lo)      y = lo + (lo - y);
+        else if (y > hi) y = hi - (y - hi);
+        else break;
+    }
+    return clamp32(y, lo, hi);
+}
+
 void pong_client_update(PongClient *c, uint32_t now_ms, PongView *out)
 {
     memset(out, 0, sizeof *out);
@@ -247,9 +276,25 @@ void pong_client_update(PongClient *c, uint32_t now_ms, PongView *out)
 
     out->starved = cursor_q8 > newest_q8 + 128;
 
-    /* Clamping the cursor to what we hold is what keeps this stable when the
-     * clock estimate is briefly wrong: it degrades to "slightly stale" rather
-     * than to an empty view or a stutter. */
+    /*
+     * Running past the newest snapshot used to clamp the cursor, which froze
+     * the ball until the next packet and then jumped it to wherever it had got
+     * to. On a bursty transport that is most of the visible motion, and it is
+     * what "jagged" actually looks like: hold, jump, hold, jump.
+     *
+     * The ball is the one thing we can honestly predict. Between contacts it is
+     * linear motion plus wall reflection and nothing else, and every snapshot
+     * carries its velocity, so extrapolating forward reproduces exactly what
+     * the server is doing rather than inventing plausible motion.
+     *
+     * Paddles are deliberately NOT extrapolated. A paddle's velocity says
+     * nothing about whether the player is about to stop, so predicting it
+     * overshoots and then snaps back -- worse than being slightly stale, which
+     * nobody can see.
+     */
+    int32_t ahead_q8 = cursor_q8 - newest_q8;
+    if (ahead_q8 > EXTRAPOLATE_MAX_Q8) ahead_q8 = EXTRAPOLATE_MAX_Q8;
+
     if (cursor_q8 < oldest_q8) cursor_q8 = oldest_q8;
     if (cursor_q8 > newest_q8) cursor_q8 = newest_q8;
 
@@ -278,6 +323,17 @@ void pong_client_update(PongClient *c, uint32_t now_ms, PongView *out)
     } else {
         out->ball_x = lerp32(a->ball_x, b->ball_x, t_q8);
         out->ball_y = lerp32(a->ball_y, b->ball_y, t_q8);
+    }
+
+    /* Past the end of what we hold, carry the ball forward ourselves. Only
+     * while actually playing: during a serve or a goal the stored velocity
+     * describes a ball that is not moving yet. */
+    if (ahead_q8 > 0 && newest->state == PONG_MATCH_STATE_PLAY &&
+        !(newest->flags & PONG_SNAP_FLAG_KEYFRAME)) {
+        out->ball_x = newest->ball_x + (((int32_t)newest->ball_vx * ahead_q8) >> 8);
+        out->ball_y = newest->ball_y + (((int32_t)newest->ball_vy * ahead_q8) >> 8);
+        out->ball_y = reflect_y(out->ball_y);
+        out->extrapolated = true;
     }
     out->left_y = lerp32(a->left_y, b->left_y, t_q8);
     out->right_y = lerp32(a->right_y, b->right_y, t_q8);

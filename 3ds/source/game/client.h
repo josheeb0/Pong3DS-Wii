@@ -43,6 +43,7 @@ typedef struct {
     uint8_t state;
     uint8_t flags;
     bool    starved;             /* ran past the newest snapshot */
+    bool    extrapolated;        /* ball position is predicted, not interpolated */
     bool    valid;
 } PongView;
 
