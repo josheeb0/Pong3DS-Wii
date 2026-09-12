@@ -129,6 +129,10 @@ const tcp = createTcpServer((sock: Socket) => {
   // A TCP client has no HTTP bootstrap, so it gets a session on connect and
   // receives its WELCOME as the first frame on the stream.
   const ctx = makeCtx();
+if (sessions.size >= config.maxSessions) {
+    sock.destroy();
+    return;
+  }
   bound = sessions.create(ctx.now);
   bound.attach(sink, ctx.now);
   bound.everyNTicks = 2;
