@@ -16,9 +16,10 @@
 /** Where a .3dsx launched from the Homebrew Launcher normally lives. */
 #define PONG_DSX_PATH "sdmc:/3ds/pong3ds.3dsx"
 
-/** Where the downloaded .cia is left for FBI to install. SD root, because that
- *  is the first place FBI opens and this should not be a scavenger hunt. */
-#define PONG_CIA_PATH "sdmc:/pong3ds.cia"
+/** Where the downloaded .cia is left for FBI to install. The directory is
+ *  created if it does not exist -- otherwise the very first update on a clean
+ *  SD card fails at the write with nothing to explain why. */
+#define PONG_CIA_PATH "sdmc:/cias/pong3ds.cia"
 
 /**
  * Build number, stamped by CI via -DPONG_BUILD_ID.

@@ -23,11 +23,14 @@
 #include "update.h"
 #include "https.h"
 #include "ghparse.h"
+#include "log.h"
 
 #include <3ds.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <errno.h>
 
 #define MANIFEST_MAX 512
 #define DOWNLOAD_MAX (2 * 1024 * 1024)   /* the .3dsx is ~420KB; 2MB is slack */
@@ -237,6 +240,27 @@ PongUpdateResult pong_update_download(const PongNetConfig *net,
     char tmp[128];
     snprintf(tmp, sizeof tmp, "%s.part", dest_path);
 
+    /*
+     * Create the containing directory first.
+     *
+     * fopen does not create missing directories, so a destination like
+     * sdmc:/cias/pong3ds.cia fails on any SD card that has never held a CIA --
+     * and the only symptom would be "cannot write to SD card", which points at
+     * a full or broken card rather than a missing folder. EEXIST is the normal
+     * case and is not an error.
+     */
+    {
+        char dir[128];
+        snprintf(dir, sizeof dir, "%s", dest_path);
+        char *slash = strrchr(dir, '/');
+        if (slash && slash != dir) {
+            *slash = '\0';
+            if (mkdir(dir, 0777) != 0 && errno != EEXIST) {
+                pong_log("update: mkdir %s failed (errno %d)", dir, errno);
+            }
+        }
+    }
+
     FILE *f = fopen(tmp, "wb");
     if (!f) {
         free(buf);
@@ -264,8 +288,10 @@ PongUpdateResult pong_update_download(const PongNetConfig *net,
         /* Deliberately does NOT say "updated": nothing about the running title
          * changed, and saying otherwise is what made a successful download look
          * like a failed one. */
+        /* Names the actual path: "saved to SD" was fine when it went to the
+         * root and is not once there is a folder to find. */
         snprintf(message, message_cap,
-                 "build %lu saved to SD as pong3ds.cia - install it with FBI",
+                 "build %lu saved to SD:/cias/pong3ds.cia - install it with FBI",
                  (unsigned long)info->remote_build);
     } else {
         snprintf(message, message_cap,
