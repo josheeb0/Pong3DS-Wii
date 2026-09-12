@@ -49,7 +49,7 @@ static u32 mix(u32 a, u32 b, float t)
 static C2D_TextBuf s_static;
 static C2D_TextBuf s_dynamic;
 
-static C2D_Text s_title, s_tapToStart, s_pressA;
+static C2D_Text s_title, s_tapToStart, s_pressA, s_credit;
 
 static void mkstatic(C2D_Text *t, const char *s)
 {
@@ -64,6 +64,7 @@ void pong_render_init(void)
     mkstatic(&s_title, "PONG MULTIPLAYER!");
     mkstatic(&s_tapToStart, "TAP THE TOUCH SCREEN\nTO CONTINUE");
     mkstatic(&s_pressA, "you are currently on 3ds");
+    mkstatic(&s_credit, "made by josheeb0 on github");
 }
 
 void pong_render_exit(void)
@@ -394,6 +395,27 @@ static void draw_top(const PongView *view, const PongHud *hud)
 
         C2D_DrawText(&s_pressA, C2D_AlignRight | C2D_WithColor,
                      392.0f, 214.0f, 0.5f, 0.4f, 0.4f, CLR_DIM);
+
+        /*
+         * Credit, top left. It sits over the attract rally rather than inside
+         * the letterbox, so it gets its own backing strip -- dim text on a
+         * moving ball is legible only about half the time, which is worse than
+         * not showing it at all.
+         *
+         * The strip is measured from the text rather than given a fixed width,
+         * so editing the string can never leave it clipped or floating on an
+         * oversized box.
+         */
+        {
+            const float cx = 8.0f, cy = 6.0f, sc = 0.4f, pad = 4.0f;
+            float tw = 0.0f, th = 0.0f;
+            C2D_TextGetDimensions(&s_credit, sc, sc, &tw, &th);
+            C2D_DrawRectSolid(cx - pad, cy - pad, 0.0f,
+                              tw + pad * 2.0f, th + pad * 2.0f,
+                              C2D_Color32(0x06, 0x0a, 0x0e, 0xC0));
+            C2D_DrawText(&s_credit, C2D_WithColor,
+                         cx, cy, 0.5f, sc, sc, CLR_DIM);
+        }
         break;
     }
 
