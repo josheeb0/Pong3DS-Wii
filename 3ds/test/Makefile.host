@@ -15,7 +15,7 @@ CLIENT := ../source/game/client.c
 
 .PHONY: all run play addr gh clean
 
-all: test_proto test_play test_addr test_ghparse test_interp test_sim test_local test_lanshape test_menu_layout
+all: test_proto test_play test_addr test_ghparse test_interp test_sim test_local test_lanshape test_menu_layout test_tone
 
 test_proto: test_proto.c $(PROTO) ../source/net/pong_proto.h golden_data.h
 	$(CC) $(CFLAGS) -o $@ test_proto.c $(PROTO) $(LDFLAGS)
@@ -23,7 +23,7 @@ test_proto: test_proto.c $(PROTO) ../source/net/pong_proto.h golden_data.h
 test_play: test_play.c $(PROTO) $(CLIENT) ../source/game/client.h
 	$(CC) $(CFLAGS) -I../source/net -I../source/game -o $@ test_play.c $(PROTO) $(CLIENT) $(LDFLAGS)
 
-run: test_proto test_addr test_ghparse test_interp test_sim test_local test_lanshape test_menu_layout
+run: test_proto test_addr test_ghparse test_interp test_sim test_local test_lanshape test_menu_layout test_tone
 	./test_proto
 	@echo ""
 	./test_addr
@@ -33,6 +33,7 @@ run: test_proto test_addr test_ghparse test_interp test_sim test_local test_lans
 	./test_local
 	./test_lanshape
 	./test_menu_layout
+	./test_tone
 	@echo ""
 	./test_interp
 
@@ -64,7 +65,7 @@ gh: test_ghparse
 	./test_ghparse
 
 clean:
-	rm -rf test_proto test_play test_addr test_ghparse test_sim test_local test_lanshape test_menu_layout *.dSYM
+	rm -rf test_proto test_play test_addr test_ghparse test_sim test_local test_lanshape test_menu_layout test_tone *.dSYM
 
 # The C simulation against a recording of the TypeScript one. client.c comes
 # along for pong_step_paddle, which the simulation shares with prediction rather
@@ -90,3 +91,10 @@ test_lanshape: test_lanshape.c ../../pc/lanshape.c ../../pc/lanshape.h
 test_menu_layout: test_menu_layout.c ../../src/ui/menu_rect.c ../../src/ui/render.h
 	$(CC) $(CFLAGS) -I../../src/ui -I../../src/gfx -I../source/net -I../source/game \
 	  -o $@ test_menu_layout.c ../../src/ui/menu_rect.c $(LDFLAGS)
+
+# The synthesised sound effects. The waveform is deterministic integer
+# arithmetic, so it is checkable with no audio device.
+test_tone: test_tone.c ../../src/audio/tone.c ../../src/audio/mixer.c ../../src/audio/sfx_events.c ../../src/audio/tone.h
+	$(CC) $(CFLAGS) -I../../src/audio -I../../src/sim -I../source/net -I../source/game -o $@ \
+	  test_tone.c ../../src/audio/tone.c ../../src/audio/mixer.c \
+	  ../../src/audio/sfx_events.c $(LDFLAGS)

@@ -23,6 +23,8 @@
 #include "net.h"
 #include "render.h"
 #include "pong_local.h"
+#include "audio.h"
+#include "sfx_events.h"
 #include "gfx.h"
 #include "config.h"
 #include "update.h"
@@ -377,6 +379,9 @@ static void pump_network(App *a, uint32_t now_ms)
         case PONG_MSG_EVENT: {
             PongEVENT e;
             if (pong_read_event(fr.payload, fr.length, &e)) {
+                PongSfx sfx;
+                if (pong_sfx_for_event(e.kind, e.a, a->client.my_side, &sfx))
+                    pong_audio_play(sfx);
                 if (e.kind == PONG_EVENT_KIND_OPP_LEFT) {
                     snprintf(a->message, sizeof a->message, "opponent left");
                 }
@@ -445,6 +450,15 @@ static void read_p2_input(App *a, u32 kHeld)
     pong_local_set_target(&a->local, 1, a->p2_target);
 }
 
+/* A local match's events, turned into noises. The same mapping the online path
+ * uses, so an offline match does not sound different. */
+static void local_sfx(void *ud, const PongSimEvent *ev)
+{
+    const App *a = (const App *)ud;
+    PongSfx s;
+    if (pong_sfx_for_event(ev->kind, ev->a, a->client.my_side, &s)) pong_audio_play(s);
+}
+
 static void begin_local(App *a, PongLocalMode mode)
 {
     pong_local_start(&a->local, mode, (PongBotLevel)a->ai_level,
@@ -453,6 +467,9 @@ static void begin_local(App *a, PongLocalMode mode)
     a->p2_target = PONG_FIELD_H_Q4 / 2;
     a->screen = SCREEN_PLAY;
     a->client.my_side = 0;
+    /* After pong_local_start, which memsets. */
+    a->local.on_event = local_sfx;
+    a->local.event_ud = a;
 }
 
 static void end_local(App *a)
@@ -532,6 +549,11 @@ int main(void)
     /* Screens, targets and text buffers all belong to the backend now; this
      * file no longer knows citro2d exists. */
     pong_gfx_init("Pong3DS");
+
+    /* Not fatal: a console whose DSP firmware is missing still plays Pong, and
+     * that is a real situation on a 3DS -- dumping it is a separate step some
+     * setups never did. Silence is the right outcome, not a refusal to run. */
+    if (!pong_audio_init()) pong_log("audio: unavailable; playing silently");
 
     static App app;
     memset(&app, 0, sizeof app);
@@ -762,6 +784,8 @@ int main(void)
             }
         }
 
+        pong_audio_update();
+
         PongView view;
         if (app.in_local) pong_local_view(&app.local, &view);
         else pong_client_update(&app.client, now, &view);
@@ -821,6 +845,7 @@ int main(void)
     if (app.net) pong_net_close(app.net);
     pong_log_section("session end");
     pong_log_close();
+    pong_audio_exit();
     pong_gfx_exit();
     romfsExit();
     return 0;

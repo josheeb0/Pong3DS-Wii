@@ -27,6 +27,8 @@
 void pong_local_start(PongLocal *l, PongLocalMode mode, PongBotLevel level,
                       uint32_t seed, uint8_t win_score)
 {
+    /* Clears on_event too, so a caller sets it AFTER starting a match. That is
+     * the natural order anyway -- you start a match, then care about it. */
     memset(l, 0, sizeof *l);
     l->mode = mode;
     l->active = true;
@@ -75,7 +77,9 @@ void pong_local_advance(PongLocal *l, uint32_t dt_ms)
             in_r.buttons = 0;
         }
 
-        pong_sim_step(&l->sim, &in_l, &in_r, NULL);
+        PongSimEvent ev[PONG_SIM_MAX_EVENTS];
+        int n = pong_sim_step(&l->sim, &in_l, &in_r, l->on_event ? ev : NULL);
+        for (int k = 0; k < n && l->on_event; k++) l->on_event(l->event_ud, &ev[k]);
     }
 
     /* Whatever could not be simulated is discarded rather than carried, so a
