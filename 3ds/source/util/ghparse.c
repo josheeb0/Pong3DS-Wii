@@ -159,3 +159,39 @@ uint32_t pong_gh_best_release(const char *json, char *out_tag, size_t cap)
     }
     return best;
 }
+
+/*
+ * The highest build-N tag in a /tags response, and the tag itself.
+ *
+ * Why tags rather than releases. The releases list answers the same question
+ * but costs ~15KB per entry, and it has to be read in bulk because GitHub does
+ * not return it newest-first -- twenty releases is 200KB+, which the console's
+ * HTTPS client would not accept. Every tag, by contrast, is a name and two
+ * URLs: all thirty-eight of this repository's tags arrive in 19KB, the same
+ * size as a single release, and taking the maximum removes the dependence on
+ * ordering entirely.
+ *
+ * Every release CI publishes has a build-N tag beside it, version releases
+ * included -- v1.1.1 and build-107 came out of the same run seconds apart --
+ * so the newest build is always reachable this way.
+ */
+uint32_t pong_gh_best_build_tag(const char *json, char *out_tag, size_t cap)
+{
+    if (!json || !out_tag || cap == 0) return 0;
+    out_tag[0] = '\0';
+
+    uint32_t best = 0;
+    const char *p = json;
+    char name[64];
+    const char *next;
+
+    while ((next = find_string(p, "\"name\"", name, sizeof name)) != NULL) {
+        uint32_t b = build_in_text(name);
+        if (b > best && strlen(name) < cap) {
+            best = b;
+            strcpy(out_tag, name);
+        }
+        p = next;
+    }
+    return best;
+}

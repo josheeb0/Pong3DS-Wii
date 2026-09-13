@@ -691,6 +691,11 @@ HttpsResult https_request(HttpsConn *c,
         }
     }
 
+    /* Recorded before the body is touched, so that a response too large to
+     * accept can report the two numbers that explain it instead of a bare -7. */
+    resp->content_length = content_len;
+    resp->body_cap = out_cap;
+
     /* Whatever arrived after the header block is the start of the body. */
     uint8_t tail[sizeof hbuf];
     size_t tail_len = hlen - header_end;
@@ -737,13 +742,21 @@ HttpsResult https_request(HttpsConn *c,
                 if (n <= 0) { c->open = false; return HTTPS_ERR_READ; }
                 wlen += (size_t)n;
             }
-            if (got + (size_t)chunk > out_cap) return HTTPS_ERR_TOOBIG;
+            if (got + (size_t)chunk > out_cap) {
+                pong_log("  HTTP  chunked body exceeds buffer: %u+%ld > %u",
+                         (unsigned)got, chunk, (unsigned)out_cap);
+                return HTTPS_ERR_TOOBIG;
+            }
             memcpy(out + got, work + pos, (size_t)chunk);
             got += (size_t)chunk;
             pos += (size_t)chunk + 2;
         }
     } else if (content_len > 0) {
-        if ((size_t)content_len > out_cap) return HTTPS_ERR_TOOBIG;
+        if ((size_t)content_len > out_cap) {
+            pong_log("  HTTP  body is %ld bytes, buffer holds %u -- giving up",
+                     content_len, (unsigned)out_cap);
+            return HTTPS_ERR_TOOBIG;
+        }
         size_t want = (size_t)content_len;
         size_t take = tail_len < want ? tail_len : want;
         memcpy(out, tail, take);

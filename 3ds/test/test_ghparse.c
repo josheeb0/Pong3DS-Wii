@@ -245,6 +245,59 @@ int main(void)
               "an error body yields 0", NULL);
     }
 
+    printf("\n=== build tags, which is what the console actually reads ===\n");
+    {
+        /*
+         * A trimmed /tags response in the real shape. Tags are read instead of
+         * releases because the releases list has to be read in BULK (GitHub
+         * does not return it newest-first) and twenty releases is over 200KB --
+         * which the console's HTTPS client refused outright, taking the whole
+         * update check down with it. Every tag here fits in 19KB.
+         *
+         * Note the version tags: they carry no build number and must simply be
+         * ignored rather than parsed as one, which is the mistake that started
+         * all of this.
+         */
+        static const char tags[] =
+            "[{\"name\":\"v1.1.1\",\"zipball_url\":\"https://api.github.com/x/zipball/refs/tags/v1.1.1\","
+              "\"commit\":{\"sha\":\"b021745\",\"url\":\"https://api.github.com/x/commits/b021745\"}},"
+            "{\"name\":\"v1.1.0\",\"commit\":{\"sha\":\"aaa\"}},"
+            "{\"name\":\"v1.0.1\",\"commit\":{\"sha\":\"bbb\"}},"
+            "{\"name\":\"build-110\",\"commit\":{\"sha\":\"ccc\"}},"
+            "{\"name\":\"build-107\",\"commit\":{\"sha\":\"ddd\"}},"
+            "{\"name\":\"build-93\",\"commit\":{\"sha\":\"eee\"}},"
+            "{\"name\":\"build-112\",\"commit\":{\"sha\":\"fff\"}}]";
+
+        char tag[64] = {0};
+        uint32_t b = pong_gh_best_build_tag(tags, tag, sizeof tag);
+        char d[96];
+        snprintf(d, sizeof d, "%u via %s", b, tag);
+        check(b == 112 && strcmp(tag, "build-112") == 0,
+              "highest build tag wins, not the first", d);
+
+        /* build-112 is LAST in that document, exactly as the real API returned
+         * build-110 seventh. Order must not matter. */
+        check(strstr(tags, "build-112") > strstr(tags, "v1.1.1"),
+              "and it was last in the document", NULL);
+
+        /* Version tags carry no build number and must contribute nothing. */
+        static const char only_versions[] =
+            "[{\"name\":\"v1.1.1\"},{\"name\":\"v1.1.0\"},{\"name\":\"v9.9.9\"}]";
+        tag[0] = '\0';
+        check(pong_gh_best_build_tag(only_versions, tag, sizeof tag) == 0,
+              "version tags alone yield no build", tag);
+
+        char t2[64] = {0};
+        check(pong_gh_best_build_tag("[]", t2, sizeof t2) == 0, "empty tag list yields 0", NULL);
+        check(pong_gh_best_build_tag(NULL, t2, sizeof t2) == 0, "null input yields 0", NULL);
+
+        /* A tag longer than the caller's buffer must be skipped, not truncated:
+         * a truncated tag builds a download URL for something that is not there. */
+        char small[8] = {0};
+        check(pong_gh_best_build_tag("[{\"name\":\"build-1234567890\"}]", small, sizeof small) == 0,
+              "an overlong tag is refused", NULL);
+    }
+
     printf("\n=== update target presets ===\n");
     {
         /* The upstream must be first: it is the shipped default, and a default

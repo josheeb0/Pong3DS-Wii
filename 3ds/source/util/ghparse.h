@@ -48,4 +48,14 @@ uint32_t pong_gh_build_number(const char *name, const char *tag);
  */
 uint32_t pong_gh_best_release(const char *json, char *out_tag, size_t cap);
 
+/**
+ * The highest `build-N` tag in a GitHub /tags response, and that tag.
+ * Returns 0 when no tag names a build.
+ *
+ * Preferred over reading the releases list: all of this repository's tags fit
+ * in 19KB where twenty releases run past 200KB, and taking the maximum needs no
+ * assumption about the order GitHub returns.
+ */
+uint32_t pong_gh_best_build_tag(const char *json, char *out_tag, size_t cap);
+
 #endif /* PONG_GHPARSE_H */

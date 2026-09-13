@@ -37,13 +37,19 @@
 
 #define MANIFEST_MAX 512
 #define DOWNLOAD_MAX (2 * 1024 * 1024)   /* the .3dsx is ~420KB; 2MB is slack */
-/* A page of releases, not one. GitHub does not return them newest-first -- a
- * freshly published build-110 came back at position seven -- so the page has to
- * be wide enough to contain the newest build wherever it lands. Twenty covers
- * the worst ordering seen by a wide margin; the real response for twenty is
- * ~230KB, and the buffer leaves room for the assets to grow. */
-#define GH_RELEASES_PER_PAGE 20
-#define GH_JSON_MAX  (320 * 1024)
+/* Tags, not releases.
+ *
+ * GitHub does not return releases newest-first -- a freshly published build-110
+ * came back at position SEVEN, behind a build-87 four hours older -- so the
+ * newest build can only be found by reading the whole list and taking the
+ * maximum. Done with releases that meant a 230KB response, which the console
+ * refused outright (rc -7, and the check stopped working entirely).
+ *
+ * Tags answer the same question for a fraction of the size, because a tag is a
+ * name and two URLs while a release carries its assets and body: all
+ * thirty-eight tags here arrive in 19KB, about what ONE release costs. */
+#define GH_TAGS_PER_PAGE 100
+#define GH_JSON_MAX  (64 * 1024)
 
 /* Checks GitHub Releases directly, so an un-redeployed server cannot hide a
  * newer build. */
@@ -58,8 +64,8 @@ static PongUpdateResult check_github(const PongNetConfig *net, uint32_t local_bu
 
     char url[256];
     snprintf(url, sizeof url,
-             "https://api.github.com/repos/%s/%s/releases?per_page=%d",
-             owner, repo, GH_RELEASES_PER_PAGE);
+             "https://api.github.com/repos/%s/%s/tags?per_page=%d",
+             owner, repo, GH_TAGS_PER_PAGE);
 
     static uint8_t body[GH_JSON_MAX];
     HttpsResponse resp;
@@ -67,30 +73,31 @@ static PongUpdateResult check_github(const PongNetConfig *net, uint32_t local_bu
                                    net->web_verify, 3, &resp);
 
     if (rc != HTTPS_OK || resp.status != 200) {
-        snprintf(out->message, sizeof out->message,
-                 "GitHub check failed (rc %d, HTTP %d)", (int)rc, resp.status);
+        if (rc == HTTPS_ERR_TOOBIG && resp.content_length > 0) {
+            /* The one failure that a bare code cannot explain: say which two
+             * numbers disagreed, since the fix depends entirely on that. */
+            snprintf(out->message, sizeof out->message,
+                     "GitHub sent %ldKB, buffer holds %uKB",
+                     resp.content_length / 1024, (unsigned)(resp.body_cap / 1024));
+        } else {
+            snprintf(out->message, sizeof out->message,
+                     "GitHub check failed (rc %d, HTTP %d)", (int)rc, resp.status);
+        }
         return PONG_UPDATE_ERROR;
     }
 
     body[resp.body_len] = '\0';
 
-    /* The whole page is read and the largest build number wins, because the
-     * order GitHub returns is not the order we need and reading only the first
-     * entry is how a console sat on build 93 announcing it was current. */
+    /* Every tag is read and the largest build wins. The order GitHub returns is
+     * not the order we need, and reading only the first entry is how a console
+     * sat on build 93 announcing it was up to date. */
     char tag[64];
-    uint32_t best = pong_gh_best_release((const char *)body, tag, sizeof tag);
+    uint32_t best = pong_gh_best_build_tag((const char *)body, tag, sizeof tag);
 
     if (best == 0) {
-        /* Both of these are normal states rather than faults, and they need
-         * different answers, so say which one it is. */
-        if (!pong_gh_first_tag((const char *)body, tag, sizeof tag)) {
-            snprintf(out->message, sizeof out->message,
-                     "%s/%s has no releases yet - press SOURCE to pick another",
-                     owner, repo);
-        } else {
-            snprintf(out->message, sizeof out->message,
-                     "%s/%s: no release names a build number", owner, repo);
-        }
+        snprintf(out->message, sizeof out->message,
+                 "%s/%s has no build tags - press SOURCE to pick another",
+                 owner, repo);
         return PONG_UPDATE_ERROR;
     }
 
