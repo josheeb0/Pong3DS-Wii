@@ -298,7 +298,7 @@ static void draw_menu(const PongHud *hud)
      * matters while the console is trying to tell you something.
      */
     if (hud->message && hud->message[0]) {
-        dyn_wrap(hud->message, 0, 10.0f, 214.0f, 0.44f, CLR_WARN, 300.0f);
+        dyn_wrap(hud->message, 0, 10.0f, PONG_MENU_STATUS_Y + 1.0f, 0.44f, CLR_WARN, 300.0f);
     } else if (hud->server_addr && hud->server_addr[0]) {
         /* The address starts after the label, measured rather than at a fixed
          * 62px. Backends do not share a font -- the PC one is fixed-width and
@@ -307,9 +307,9 @@ static void draw_menu(const PongHud *hud)
         const float lx = 10.0f;
         float lw = 0.0f, lh = 0.0f;
         pong_gfx_text_size("SERVER", 0.44f, &lw, &lh);
-        dyn("SERVER", PONG_ALIGN_LEFT, lx, 215.0f, 0.44f, CLR_FAINT);
+        dyn("SERVER", PONG_ALIGN_LEFT, lx, PONG_MENU_STATUS_Y + 2.0f, 0.44f, CLR_FAINT);
         float ax = lx + lw + 6.0f;
-        dyn_wrap(hud->server_addr, PONG_ALIGN_LEFT, ax, 213.0f, 0.46f, CLR_DIM,
+        dyn_wrap(hud->server_addr, PONG_ALIGN_LEFT, ax, PONG_MENU_STATUS_Y, 0.46f, CLR_DIM,
                  310.0f - ax);
     }
 }

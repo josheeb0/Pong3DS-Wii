@@ -40,6 +40,19 @@ typedef enum {
 
 extern const PongRect PONG_MENU_RECT[MENU_COUNT];
 
+/*
+ * Where the menu's status line starts -- the "SERVER <address>" row, or a
+ * message when there is one.
+ *
+ * A constant rather than a literal in the drawing code because the buttons have
+ * to end above it, and they did not: the utility row was moved down and grew to
+ * 28px, ending at 218, while this stayed at 213. Five pixels of overlap, right
+ * where the address is most needed. 3ds/test/test_menu_layout.c now checks the
+ * two against each other, which it could not do while this number existed only
+ * inside a draw call.
+ */
+#define PONG_MENU_STATUS_Y 213.0f
+
 bool pong_ui_hit(const PongRect *r, float x, float y);
 
 /** Which menu item is under a touch, or -1. */
