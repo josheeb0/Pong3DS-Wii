@@ -1,22 +1,49 @@
-# Pong3DS
+# Pong
 
-Cross-play Pong between a **web browser** and a **Nintendo 3DS**, refereed by one
-authoritative server.
+Cross-play Pong across **six clients** — a Nintendo 3DS, a PS Vita, Windows,
+macOS, Linux and a web browser — refereed by one authoritative server.
 
-The 3DS plays over raw TCP on the LAN at full 60Hz, or over HTTPS from anywhere
-using its own bundled TLS stack. The browser negotiates WebSocket → SSE →
-HTTP long-poll, so it works even where WebSockets don't survive the proxy.
+Every pairing has been played on real hardware.
+
+|            | 3DS | Vita | Windows | macOS | Linux | Browser |
+|------------|:---:|:----:|:-------:|:-----:|:-----:|:-------:|
+| **3DS**    |  —  |  ✅  |   ✅    |  ✅   |  ✅   |   ✅    |
+| **Vita**   | ✅  |  —   |   ✅    |  ✅   |  ✅   |   ✅    |
+| **Windows**| ✅  |  ✅  |    —    |  ✅   |  ✅   |   ✅    |
+| **macOS**  | ✅  |  ✅  |   ✅    |   —   |  ✅   |   ✅    |
+| **Linux**  | ✅  |  ✅  |   ✅    |  ✅   |   —   |   ✅    |
+| **Browser**| ✅  |  ✅  |   ✅    |  ✅   |  ✅   |    —    |
 
 ```
-   browser (React + MUI)                    Nintendo 3DS (C + citro2d)
-   WebSocket / SSE / long-poll              raw TCP  /  HTTPS + mbedTLS
-            \                                        /
-             \______  identical binary frames  ______/
+  browser        3DS              Vita           Windows / macOS / Linux
+  React+MUI      C + citro2d      C + vita2d     C + SDL3
+  WS/SSE/poll    TCP / HTTPS      TCP (SceNet)   TCP
+       \             |                |                    /
+        \____________ identical binary frames _____________/
                               |
                     Session (transport-agnostic)
                               |
-                    Room → 60Hz integer simulation
+                    Room -> 60Hz integer simulation
 ```
+
+## What each client is
+
+| | Interface | Transport | Text entry |
+|---|---|---|---|
+| **3DS** | two screens, 400x240 + 320x240 touch | raw TCP on a LAN, or HTTPS anywhere via its own mbedTLS | swkbd |
+| **PS Vita** | one 960x544 screen, touch | raw TCP over SceNet | system IME |
+| **Windows** | resizable window | raw TCP (Winsock) | SDL text input |
+| **macOS** | resizable window | raw TCP | SDL text input |
+| **Linux** | resizable window | raw TCP | SDL text input |
+| **Browser** | responsive page | WebSocket -> SSE -> long-poll | the browser's |
+
+Every client offers quick match, room codes, a CPU opponent, an editable server
+address and a player name shown beside the score. The 3DS additionally updates
+itself from GitHub Releases.
+
+**The desktop and Vita builds speak raw TCP only**, so they play against a server
+on your network. For play over the internet, the browser client and the 3DS both
+do it properly — the 3DS carries its own TLS stack for exactly that reason.
 
 ## What it looks like
 
@@ -74,10 +101,16 @@ on `:5173`. Open two tabs and play. `make test` runs everything.
 ## Building for each platform
 
 ```bash
-make 3ds          # 3ds/pong3ds.3dsx   (devkitARM)
-make -C pc        # pc/pong-pc         (SDL3)
-make -C vita      # vita/pong-vita.vpk (VitaSDK)
+make dev          # server + web client, for development
+make 3ds          # 3ds/pong3ds.3dsx and .cia   (devkitARM)
+make -C pc        # pc/pong-pc                  (SDL3)
+make -C vita      # vita/pong-vita.vpk          (VitaSDK)
+make test         # everything below
 ```
+
+CI builds all five native targets on every push and attaches them to a release
+on a version tag. Nothing needs the others installed: the 3DS build does not
+need SDL3, the desktop build does not need devkitPro.
 
 `make -C pc run` opens a window.
 
@@ -252,6 +285,8 @@ make test
 
 | Test | Proves |
 |------|--------|
+| `server/test/matchmaker.test.ts` | Pairing is immediate, does not depend on timing, still prefers cross-play when there is a choice, and never pairs someone with a disconnected session |
+| `3ds/test/test_interp.c` | The ball keeps moving when snapshots stop, stops predicting past its cap, stays inside the field, and absorbs corrections rather than snapping |
 | `server/test/sim.test.ts` | Determinism over 1000 ticks, paddle clamping, no tunnelling, scoring, slow mode |
 | `3ds/test/test_proto.c` | The C codec matches the TypeScript encoder byte for byte, rejects malformed frames, and reports NEED_MORE at every truncation point |
 | `3ds/test/test_play.c` | **The actual 3DS netcode plays a real match** against a running server — compiled with host clang under ASan/UBSan, no console required |
@@ -298,6 +333,10 @@ See `deploy/DEPLOY.md`. Short version: pull the image, publish 8788 (HTTP) and
 
 ## Not built
 
-A Wii client. The protocol reserves `platform = 3` for it, and the codec and
-netcode are already platform-free C, so it needs a renderer and a socket layer
-rather than any protocol change.
+**A Wii client.** The protocol reserves `platform = 3` for it and always has.
+After the Vita, the shape of that job is known precisely: a renderer backend
+behind `src/gfx/gfx.h` and a socket layer. No protocol change, no simulation
+change, and the interface already exists in two forms to pick from.
+
+**In-app updates anywhere but the 3DS.** The console fetches its own `.3dsx`
+from GitHub Releases; every other platform is installed by hand.

@@ -19,6 +19,11 @@ const PLATFORM_LABEL: Record<number, string> = {
   [Platform.WEB]: 'BROWSER',
   [Platform.N3DS]: '3DS',
   [Platform.WII]: 'WII',
+  // Added when the desktop and Vita clients arrived. Without them a real
+  // opponent was labelled '?', which reads as a fault rather than a platform
+  // this build had not heard of.
+  [Platform.PC]: 'PC',
+  [Platform.VITA]: 'VITA',
 };
 
 /** `?transport=ws|sse|poll` forces a rung, for testing the ladder. */
@@ -77,6 +82,9 @@ export default function App() {
         <Toolbar variant="dense" sx={{ gap: 1 }}>
           <Typography variant="h1" sx={{ fontSize: '1rem', flexGrow: 1 }}>
             PONG MULTIPLAYER!
+            <Box component="span" sx={{ opacity: 0.55, fontSize: '0.78rem', ml: 1.5 }}>
+              3DS · Vita · Windows · macOS · Linux · browser
+            </Box>
           </Typography>
 
           {connected && (
@@ -163,7 +171,10 @@ export default function App() {
 
         <Typography variant="caption" color="text.secondary" align="center">
           {hud.status === 'queued'
-            ? 'Waiting for an opponent — a 3DS gets priority. A CPU opponent is offered after 15s.'
+            // No longer true that a 3DS gets priority: the pairing delay that
+            // implemented it made two same-platform players wait eight seconds
+            // every time, and was removed.
+            ? 'Waiting for an opponent — 3DS, Vita, desktop or another browser. A CPU opponent is offered after 15s.'
             : 'Move with the mouse, or ↑/↓ (W/S).'}
         </Typography>
 

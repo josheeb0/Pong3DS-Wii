@@ -338,7 +338,7 @@ static void draw_menu(const DeskHud *hud, int out_w, int out_h)
     pong_gfx_text(cx, ty, 0.8f, CLR_TEXT, PONG_ALIGN_CENTER, "M U L T I P L A Y E R");
     ty += 26.0f;
     pong_gfx_text(cx, ty, 0.62f, CLR_FAINT, PONG_ALIGN_CENTER,
-                  "cross-play with a browser, a 3DS or a Vita");
+                  "plays across 3DS, Vita, Windows, macOS, Linux and the browser");
 
     for (int i = 0; i < DESK_ITEM_COUNT; i++) {
         float x, y, w, h;
