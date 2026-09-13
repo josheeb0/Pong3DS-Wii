@@ -67,7 +67,17 @@ BUILD_ID ?= 0
 
 # The release name, from the VERSION file at the repository root so that every
 # platform shows the same string and none of them can drift.
-VERSION := $(shell cat $(CURDIR)/../VERSION 2>/dev/null || echo 0.0.0)
+#
+# TOPDIR, not CURDIR: this Makefile re-invokes itself inside build/, so CURDIR
+# is 3ds/ on the first pass and 3ds/build/ on the second. The compile happens on
+# the SECOND pass, where $(CURDIR)/../VERSION pointed at 3ds/VERSION -- which
+# does not exist -- and the console shipped showing v0.0.0. TOPDIR is exported
+# by the first pass and is 3ds/ in both.
+VERSION := $(shell cat $(TOPDIR)/../VERSION 2>/dev/null)
+ifeq ($(strip $(VERSION)),)
+$(error VERSION not found at $(TOPDIR)/../VERSION -- refusing to build rather \
+than stamping a placeholder, which is how v0.0.0 reached a console)
+endif
 
 CFLAGS	+=	$(INCLUDE) -D__3DS__ -DMBEDTLS_CONFIG_FILE='"mbedtls_config_3ds.h"' -DPONG_BUILD_ID=$(BUILD_ID) -DPONG_VERSION='"$(VERSION)"'
 
