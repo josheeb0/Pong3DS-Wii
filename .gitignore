@@ -20,6 +20,11 @@ build/
 3ds/vendor/.src/
 3ds/vendor/mbedtls/
 3ds/vendor/tools/
+
+# The desktop's mbedTLS, built by pc/vendor/build-mbedtls.sh. Same reasoning as
+# the 3DS one: a built library is not source, and it is 8MB of it.
+pc/vendor/.src/
+pc/vendor/mbedtls/
 # Host test binaries have no extension, so match by prefix and keep the
 # sources. Enumerating them by name meant adding a new test silently committed
 # its binary -- which then shadowed compilation on a different architecture in

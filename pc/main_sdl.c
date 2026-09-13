@@ -17,6 +17,7 @@
 #include "desktop.h"
 #include "pong_local.h"
 #include "lanshape.h"
+#include "net_https_pc.h"
 #include "audio.h"
 #include "sfx_events.h"
 #include "net_pc.h"
@@ -29,7 +30,16 @@
 #define CFG_PATH       "pong-pc.cfg"
 
 typedef struct {
+    /*
+     * Two transports, one at a time.
+     *
+     * Raw TCP for a LAN server, HTTPS for anything else -- the public
+     * deployment is only exposed on 443 through a tunnel, so TCP gets you
+     * nowhere off the LAN. Which one is open is decided by the address, and
+     * the rest of the app goes through the three helpers below and never asks.
+     */
     PongNetPC  *net;
+    PongNetHttps *hnet;
     PongClient  client;
     DeskHud     hud;
     PongView    view;
@@ -109,6 +119,7 @@ static void cfg_save(const App *a)
 
 static bool send_frame(App *a, const uint8_t *buf, size_t n)
 {
+    if (a->hnet) return pong_https_net_send(a->hnet, buf, n);
     return a->net && pong_pc_send(a->net, buf, n);
 }
 
@@ -136,9 +147,25 @@ static void send_join(App *a, uint8_t mode)
     send_frame(a, buf, pong_write_join(buf, sizeof buf, 2, &j));
 }
 
-static void begin_connect(App *a, uint8_t mode)
+/** Closes whichever transport is open. */
+static void net_close(App *a)
 {
     if (a->net) { pong_pc_close(a->net); a->net = NULL; }
+    if (a->hnet) { pong_https_net_close(a->hnet); a->hnet = NULL; }
+}
+
+static bool net_open(const App *a) { return a->net || a->hnet; }
+
+static int net_recv(App *a, uint8_t *buf, size_t cap)
+{
+    if (a->hnet) return pong_https_net_recv(a->hnet, buf, cap);
+    if (a->net) return pong_pc_recv(a->net, buf, cap);
+    return -1;
+}
+
+static void begin_connect(App *a, uint8_t mode)
+{
+    net_close(a);
     pong_client_init(&a->client);
     a->acc_len = 0;
 
@@ -147,18 +174,37 @@ static void begin_connect(App *a, uint8_t mode)
     /* No port means the address could not be resolved to one -- a public
      * hostname this client has no transport for. Say so here rather than
      * dialling port 0 and reporting whatever the OS makes of that. */
-    if (a->port == 0) {
-        snprintf(a->error, sizeof a->error,
-                 "no port for %s. This client speaks raw TCP, not HTTPS, so it "
-                 "cannot reach a public server. Set SERVER to a LAN address, or "
-                 "to host:port.", a->server[0] ? a->server : "(unset)");
+    /*
+     * A LAN address with no port is the only case left that cannot proceed.
+     * A public one no longer needs a port at all -- it defaults to 443, because
+     * this client can finally speak HTTPS. That refusal was correct when it was
+     * written and is now just an obstacle.
+     */
+    if (a->port == 0 && pong_lan_shaped(a->server)) {
+        snprintf(a->error, sizeof a->error, "no port for %s",
+                 a->server[0] ? a->server : "(unset)");
         a->hud.screen = DESK_ERROR;
         return;
     }
 
     a->hud.screen = DESK_CONNECTING;
-    a->net = pong_pc_connect(a->server, a->port, 3000, err, sizeof err);
-    if (!a->net) {
+    /*
+     * The address decides the transport.
+     *
+     * A LAN address gets raw TCP, which is dramatically better when it applies
+     * -- 60Hz against a poll, and single-digit latency instead of a round trip
+     * through a tunnel. Anything else gets HTTPS, because that is the only way
+     * in from outside.
+     */
+    if (pong_lan_shaped(a->server)) {
+        a->net = pong_pc_connect(a->server, a->port, 3000, err, sizeof err);
+    } else {
+        /* 443 unless the player named a port. */
+        uint16_t port = a->port ? a->port : 443;
+        a->hnet = pong_https_net_connect(a->server, port, true, err, sizeof err);
+    }
+
+    if (!net_open(a)) {
         snprintf(a->error, sizeof a->error, "%s", err);
         fprintf(stderr, "connect: %s\n", err);
         a->hud.screen = DESK_ERROR;
@@ -180,10 +226,10 @@ static void leave_match(App *a)
 
 static void pump_network(App *a, uint32_t now)
 {
-    if (!a->net) return;
+    if (!net_open(a)) return;
 
     uint8_t chunk[RX_CHUNK];
-    int got = pong_pc_recv(a->net, chunk, sizeof chunk);
+    int got = net_recv(a, chunk, sizeof chunk);
     if (got < 0) {
         snprintf(a->error, sizeof a->error, "disconnected");
         leave_match(a);
@@ -270,7 +316,7 @@ static void pump_network(App *a, uint32_t now)
 
 static void send_input(App *a, uint32_t now)
 {
-    if (!a->net) return;
+    if (!net_open(a)) return;
     if (now - a->last_input_ms < 1000 / INPUT_HZ) return;
     a->last_input_ms = now;
 
@@ -417,10 +463,11 @@ static void commit_editor(App *a)
                 snprintf(a->toast, sizeof a->toast, "server %s:%u", a->server, (unsigned)a->port);
             } else {
                 a->port = 0;
+                /* 443, because this client speaks HTTPS now. The old message
+                 * here refused the address outright, which was true then. */
+                a->port = 443;
                 snprintf(a->toast, sizeof a->toast,
-                         "%s needs a port - this client speaks raw TCP, not HTTPS, "
-                         "so it cannot reach a public server. Use a LAN address, "
-                         "or type host:port.", a->server);
+                         "server %s over HTTPS", a->server);
             }
         }
     } else if (a->edit_target == DESK_ITEM_NAME) {
@@ -813,7 +860,7 @@ int main(int argc, char **argv)
     }
 
     if (app.pad) SDL_CloseGamepad(app.pad);
-    if (app.net) pong_pc_close(app.net);
+    net_close(&app);
     pong_audio_exit();
     pong_gfx_exit();
     return 0;

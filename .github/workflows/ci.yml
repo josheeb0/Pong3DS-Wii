@@ -315,6 +315,20 @@ jobs:
       - name: Install SDL3
         run: brew install sdl3
 
+      # mbedTLS for the desktop's HTTPS transport. Cached because it is a
+      # from-source build of a whole TLS library and the sources never change
+      # between runs -- the key is the pinned version in the build script.
+      - name: Cache mbedTLS
+        id: mbedtls-cache
+        uses: actions/cache@v4
+        with:
+          path: pc/vendor/mbedtls
+          key: mbedtls-${{ runner.os }}-3.6.2
+
+      - name: Build mbedTLS
+        if: steps.mbedtls-cache.outputs.cache-hit != 'true'
+        run: ./pc/vendor/build-mbedtls.sh
+
       - name: Build
         run: make -C pc BUILD_ID=${{ needs.verify.outputs.build }}
 
@@ -415,6 +429,20 @@ jobs:
           cmake --build /tmp/SDL/build
           cmake --install /tmp/SDL/build
 
+      # mbedTLS for the desktop's HTTPS transport. Cached because it is a
+      # from-source build of a whole TLS library and the sources never change
+      # between runs -- the key is the pinned version in the build script.
+      - name: Cache mbedTLS
+        id: mbedtls-cache
+        uses: actions/cache@v4
+        with:
+          path: pc/vendor/mbedtls
+          key: mbedtls-${{ runner.os }}-3.6.2
+
+      - name: Build mbedTLS
+        if: steps.mbedtls-cache.outputs.cache-hit != 'true'
+        run: ./pc/vendor/build-mbedtls.sh
+
       - name: Build
         run: |
           export PKG_CONFIG_PATH="$HOME/sdl3-install/lib/pkgconfig:$HOME/sdl3-install/lib64/pkgconfig"
@@ -489,24 +517,63 @@ jobs:
           Expand-Archive -Path sdl3.zip -DestinationPath sdl3 -Force
           Get-ChildItem sdl3
 
+      # mbedTLS for Windows.
+      #
+      # CMake here, not the plain makefile the POSIX script uses: that makefile
+      # drives gcc, and this job is MSVC. Same pinned version, same library,
+      # different build system -- which is the whole reason this is a separate
+      # step rather than the shared script.
+      - name: Cache mbedTLS
+        id: mbedtls-cache
+        uses: actions/cache@v4
+        with:
+          path: pc/vendor/mbedtls
+          key: mbedtls-windows-msvc-3.6.2
+
+      - name: Build mbedTLS
+        if: steps.mbedtls-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          V=3.6.2
+          mkdir -p pc/vendor/.src && cd pc/vendor/.src
+          curl -sSL -o m.tar.bz2 "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-$V/mbedtls-$V.tar.bz2"
+          tar -xjf m.tar.bz2
+          cd "mbedtls-$V"
+          cmake -B build -DENABLE_TESTING=Off -DENABLE_PROGRAMS=Off \
+                -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL
+          cmake --build build --config Release --parallel
+          cd "$GITHUB_WORKSPACE"
+          mkdir -p pc/vendor/mbedtls/lib pc/vendor/mbedtls/include
+          cp pc/vendor/.src/mbedtls-$V/build/library/Release/*.lib pc/vendor/mbedtls/lib/
+          cp -R pc/vendor/.src/mbedtls-$V/include/mbedtls pc/vendor/mbedtls/include/
+          cp -R pc/vendor/.src/mbedtls-$V/include/psa pc/vendor/mbedtls/include/ || true
+          ls pc/vendor/mbedtls/lib
+
       - name: Build
         shell: cmd
         env:
           BUILD_NUM: ${{ needs.verify.outputs.build }}
         run: |
           set SDLDIR=sdl3\SDL3-%SDL_VERSION%
-          cl /nologo /std:c11 /O2 /W3 /D_CRT_SECURE_NO_WARNINGS ^
+          rem /MD matches the dynamic CRT mbedTLS was built against. Without
+          rem it cl defaults to the static CRT and the link fails on
+          rem __imp__time64 -- the __imp__ prefix being the tell that the
+          rem library expects those symbols imported from a DLL.
+          cl /nologo /std:c11 /O2 /W3 /MD /D_CRT_SECURE_NO_WARNINGS ^
              /DPONG_BUILD_ID=%BUILD_NUM% ^
-             /Ipc /Isrc /Isrc\sim /Isrc\audio /Isrc\gfx /Isrc\ui /I3ds\source\game /I3ds\source\net ^
+             /Ipc /Ipc\vendor\mbedtls\include /Isrc /Isrc\sim /Isrc\audio /Isrc\gfx /Isrc\ui /I3ds\source\game /I3ds\source\net ^
              /I%SDLDIR%\include ^
              pc\main_sdl.c pc\net_pc.c pc\lanshape.c ^
+             pc\https_pc.c pc\net_https_pc.c ^
              src\gfx\sdl3\gfx_sdl3.c src\ui\desktop.c ^
              src\sim\pong_sim.c src\sim\pong_bot.c src\sim\pong_local.c ^
              src\audio\tone.c src\audio\mixer.c src\audio\sfx_events.c ^
              src\audio\sdl3\audio_sdl3.c ^
              3ds\source\net\pong_proto.c 3ds\source\game\client.c ^
              /Fe:pong-pc.exe ^
-             /link /LIBPATH:%SDLDIR%\lib\x64 SDL3.lib ws2_32.lib
+             /link /LIBPATH:%SDLDIR%\lib\x64 /LIBPATH:pc\vendor\mbedtls\lib ^
+             SDL3.lib ws2_32.lib mbedtls.lib mbedx509.lib mbedcrypto.lib bcrypt.lib advapi32.lib
           if errorlevel 1 exit /b 1
 
       - name: Bundle
