@@ -14,6 +14,7 @@ import { GameClient } from './game/client';
 import PongCanvas from './components/PongCanvas';
 import type { RungName } from './net/ladder';
 import { AI_LEVELS, type AiLevel } from './game/local';
+import { initSfx } from './game/sfx';
 
 const PLATFORM_LABEL: Record<number, string> = {
   [Platform.UNKNOWN]: '?',
@@ -80,7 +81,15 @@ export default function App() {
     return '';
   }, []);
 
+  /*
+   * Browsers refuse to start audio before the user has interacted with the
+   * page, so this happens on the click that starts a match rather than at
+   * load. Starting early does not fail loudly -- it leaves a context stuck in
+   * "suspended" that plays nothing and reports nothing, which is a genuinely
+   * confusing way to have no sound.
+   */
   const ensureConnected = useCallback(async () => {
+    initSfx();
     if (hud.status !== 'idle') return;
     setBusy(true);
     try {
@@ -207,7 +216,7 @@ export default function App() {
                   the only two things on this page that still work, which is
                   most of the reason they exist. */}
               <Button variant="outlined" startIcon={<SmartToyIcon />}
-                onClick={() => client.startLocal('ai', aiLevel)}>
+                onClick={() => { initSfx(); client.startLocal('ai', aiLevel); }}>
                 Vs AI
               </Button>
               <TextField
@@ -223,7 +232,7 @@ export default function App() {
                 {AI_LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
               </TextField>
               <Button variant="outlined" startIcon={<GroupsIcon />}
-                onClick={() => client.startLocal('two-player', aiLevel)}>
+                onClick={() => { initSfx(); client.startLocal('two-player', aiLevel); }}>
                 2 players
               </Button>
             </>
