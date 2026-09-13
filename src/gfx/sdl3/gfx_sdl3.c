@@ -138,6 +138,11 @@ bool pong_gfx_text_input(bool enabled)
     return enabled ? SDL_StartTextInput(s_win) : SDL_StopTextInput(s_win);
 }
 
+void pong_gfx_system_dialog(bool active)
+{
+    (void)active;   /* SDL composites its own text input */
+}
+
 void pong_gfx_output_size(int *w, int *h)
 {
     int ow = 0, oh = 0;

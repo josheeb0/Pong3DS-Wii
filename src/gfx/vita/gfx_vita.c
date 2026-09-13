@@ -26,7 +26,9 @@
 
 #include <vita2d.h>
 #include <psp2/kernel/processmgr.h>
+#include <psp2/common_dialog.h>
 #include <string.h>
+#include <stdio.h>
 
 #define VITA_W 960.0f
 #define VITA_H 544.0f
@@ -55,6 +57,11 @@ static inline unsigned int v2d(PongColor c)
 
 static void layout(void)
 {
+    /* The whole screen, unscaled. The Vita has one display and an interface
+     * built for it should use all of it rather than pretending to be two
+     * handheld panels side by side. */
+    s_vp[PONG_SURFACE_FULL] = (Viewport){ 0.0f, 0.0f, VITA_W, VITA_H, 1.0f };
+
     const float gap = 8.0f;
 
     float side_w = PONG_TOP_W + gap + PONG_BOTTOM_W;
@@ -95,7 +102,11 @@ static bool build_font(void)
     if (!s_font) return false;
 
     unsigned int *px = (unsigned int *)vita2d_texture_get_datap(s_font);
+    if (!px) return false;          /* a texture can exist with no mapping */
+
     const unsigned int stride = vita2d_texture_get_stride(s_font) / 4;
+    if (stride < (unsigned)(n * 8)) return false;   /* would write past the row */
+
     memset(px, 0, (size_t)stride * 8 * 4);
 
     for (int g = 0; g < n; g++) {
@@ -111,13 +122,24 @@ static bool build_font(void)
     return true;
 }
 
+/* Written to by init so a failure says which step, not just "false". */
+char g_vita_gfx_error[96] = "";
+
 bool pong_gfx_init(const char *title)
 {
     (void)title;
     if (s_ready) return true;
+
     vita2d_init();
     vita2d_set_clear_color(RGBA8(0x10, 0x12, 0x16, 0xFF));
-    if (!build_font()) return false;
+
+    if (!build_font()) {
+        snprintf(g_vita_gfx_error, sizeof g_vita_gfx_error,
+                 "font atlas failed (texture %ux8)",
+                 (unsigned)((FONT8X8_LAST - FONT8X8_FIRST + 1) * 8));
+        return false;
+    }
+
     layout();
     s_ready = true;
     return true;
@@ -137,9 +159,18 @@ void pong_gfx_frame_begin(void)
     vita2d_clear_screen();
 }
 
+static bool s_dialog = false;
+
+void pong_gfx_system_dialog(bool active) { s_dialog = active; }
+
 void pong_gfx_frame_end(void)
 {
     vita2d_end_drawing();
+    /* The IME is composited by the system, and only if it is given the chance
+     * every frame between drawing and the swap. Skip this and the keyboard
+     * never appears -- which reads as the application having frozen, because
+     * from the player's side it has. */
+    if (s_dialog) vita2d_common_dialog_update();
     vita2d_swap_buffers();
 }
 
@@ -151,9 +182,8 @@ bool pong_gfx_text_input(bool enabled)
 
 void pong_gfx_output_size(int *w, int *h)
 {
-    /* The handheld UI never asks; reported for completeness. */
-    if (w) *w = (int)PONG_TOP_W;
-    if (h) *h = (int)PONG_TOP_H;
+    if (w) *w = (int)VITA_W;
+    if (h) *h = (int)VITA_H;
 }
 
 void pong_gfx_request_size(int w, int h)

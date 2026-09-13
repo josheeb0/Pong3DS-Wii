@@ -25,6 +25,11 @@ bool pong_gfx_text_input(bool enabled)
     return false;   /* the console opens swkbd instead */
 }
 
+void pong_gfx_system_dialog(bool active)
+{
+    (void)active;   /* swkbd takes over the screen itself */
+}
+
 void pong_gfx_output_size(int *w, int *h)
 {
     /* The handheld UI never asks; reported for completeness. */

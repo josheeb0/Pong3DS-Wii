@@ -100,28 +100,55 @@ static const DeskLabel ITEM[DESK_ITEM_COUNT] = {
 
 /* Menu geometry, shared by drawing and hit-testing so a row that is drawn is
  * always a row that can be clicked. */
+/*
+ * How big the title block is, which the menu has to start below.
+ *
+ * Scaled down on a short screen. The first version used fixed sizes suited to
+ * a desktop window, and on the Vita's 544px display the menu was clamped
+ * upward until it sat on top of the tagline -- the layout had no idea the
+ * header existed.
+ */
+static float title_scale(int out_h) { return (out_h < 620) ? 2.1f : 3.0f; }
+
+static float title_block_h(int out_h)
+{
+    /* Title, the spaced-out MULTIPLAYER, and the tagline, plus a gap. */
+    float t = title_scale(out_h);
+    return (float)out_h * 0.06f + t * 24.0f + 30.0f + 22.0f + 24.0f;
+}
+
+/** Row height, shrunk to fit rather than overflowing. */
+static float menu_row_h(int out_h)
+{
+    const float gap = 8.0f;
+    float avail = (float)out_h - title_block_h(out_h) - 72.0f;  /* 72: hint line */
+    float rh = (avail - (DESK_ITEM_COUNT - 1) * gap) / (float)DESK_ITEM_COUNT;
+    if (rh > 52.0f) rh = 52.0f;
+    if (rh < 34.0f) rh = 34.0f;      /* below this the two lines stop fitting */
+    return rh;
+}
+
 static void menu_row(int out_w, int out_h, int i, float *x, float *y, float *w, float *h)
 {
     float rw = (float)out_w * 0.46f;
     if (rw < 320.0f) rw = 320.0f;
     if (rw > 560.0f) rw = 560.0f;
-    const float rh = 52.0f, gap = 8.0f;
+
+    const float gap = 8.0f;
+    const float rh = menu_row_h(out_h);
     const float total = DESK_ITEM_COUNT * rh + (DESK_ITEM_COUNT - 1) * gap;
 
     /*
-     * The start is clamped ONCE and every row measured from it.
+     * Measured DOWN from the title rather than up from the bottom.
      *
-     * Clamping each row's own y against the full block height was the first
-     * version, and it fired for the later rows and not the earlier ones --
-     * which opened a gap in the middle of the menu and pushed the last row
-     * under the control hints. A block of rows has one origin, not six.
+     * The block has one origin, not six -- clamping each row separately was an
+     * earlier bug that opened a gap in the middle of the menu. Starting below
+     * the header is what stops the other failure, where a short screen pushed
+     * the whole block up into the title.
      */
-    float start = (float)out_h * 0.38f;
-    const float bottom_reserved = 72.0f;     /* the control hint line */
-    if (start + total > (float)out_h - bottom_reserved) {
-        start = (float)out_h - bottom_reserved - total;
-    }
-    if (start < 24.0f) start = 24.0f;
+    float start = title_block_h(out_h);
+    float slack = ((float)out_h - 72.0f) - (start + total);
+    if (slack > 0.0f) start += slack * 0.5f;      /* centre in what is left */
 
     *x = ((float)out_w - rw) * 0.5f;
     *y = start + (float)i * (rh + gap);
@@ -304,10 +331,13 @@ static void draw_menu(const DeskHud *hud, int out_w, int out_h)
 {
     float cx = (float)out_w * 0.5f;
 
-    pong_gfx_text(cx, (float)out_h * 0.10f, 3.0f, CLR_ACCENT, PONG_ALIGN_CENTER, "PONG");
-    pong_gfx_text(cx, (float)out_h * 0.10f + 78.0f, 0.9f, CLR_TEXT, PONG_ALIGN_CENTER,
-                  "M U L T I P L A Y E R");
-    pong_gfx_text(cx, (float)out_h * 0.10f + 108.0f, 0.7f, CLR_FAINT, PONG_ALIGN_CENTER,
+    const float ts = title_scale(out_h);
+    float ty = (float)out_h * 0.06f;
+    pong_gfx_text(cx, ty, ts, CLR_ACCENT, PONG_ALIGN_CENTER, "PONG");
+    ty += ts * 24.0f + 4.0f;
+    pong_gfx_text(cx, ty, 0.8f, CLR_TEXT, PONG_ALIGN_CENTER, "M U L T I P L A Y E R");
+    ty += 26.0f;
+    pong_gfx_text(cx, ty, 0.62f, CLR_FAINT, PONG_ALIGN_CENTER,
                   "cross-play with a browser, a 3DS or a Vita");
 
     for (int i = 0; i < DESK_ITEM_COUNT; i++) {
@@ -324,11 +354,15 @@ static void draw_menu(const DeskHud *hud, int out_w, int out_h)
         pong_gfx_rect(x + w - 1.0f, y, 1.0f, h, edge);
         if (sel) pong_gfx_rect(x, y, 4.0f, h, CLR_ACCENT);
 
-        pong_gfx_text(x + 20.0f, y + 8.0f, 0.85f, sel ? CLR_TEXT : CLR_DIM,
+        /* Both lines positioned from the row's own height: a 34px row on a
+         * handheld and a 52px one in a window should both look deliberate. */
+        const float label_s = (h >= 46.0f) ? 0.85f : 0.72f;
+        const float hint_s  = (h >= 46.0f) ? 0.60f : 0.52f;
+        pong_gfx_text(x + 20.0f, y + h * 0.12f, label_s, sel ? CLR_TEXT : CLR_DIM,
                       PONG_ALIGN_LEFT, ITEM[i].label);
         if (ITEM[i].hint) {
-            pong_gfx_text(x + 20.0f, y + 30.0f, 0.6f, sel ? CLR_DIM : CLR_FAINT,
-                          PONG_ALIGN_LEFT, ITEM[i].hint);
+            pong_gfx_text(x + 20.0f, y + h * 0.12f + label_s * 24.0f + 2.0f, hint_s,
+                          sel ? CLR_DIM : CLR_FAINT, PONG_ALIGN_LEFT, ITEM[i].hint);
         }
 
         /* The two settings rows show their current value on the right, which is
@@ -337,7 +371,7 @@ static void draw_menu(const DeskHud *hud, int out_w, int out_h)
         if (i == DESK_ITEM_SERVER) val = hud->server_addr;
         if (i == DESK_ITEM_NAME)   val = hud->my_name;
         if (val && val[0]) {
-            pong_gfx_text(x + w - 20.0f, y + 18.0f, 0.65f,
+            pong_gfx_text(x + w - 20.0f, y + h * 0.5f - 8.0f, 0.62f,
                           sel ? CLR_ACCENT : CLR_FAINT, PONG_ALIGN_RIGHT, val);
         }
     }

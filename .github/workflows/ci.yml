@@ -451,17 +451,18 @@ jobs:
 
   # --------------------------------------------------------------- vita -----
   #
-  # THIS HAS NEVER BUILT. The Vita backend was written without a VitaSDK to
-  # hand, so this job exists to find out what is wrong with it -- which is the
-  # fastest way to get from "carefully written" to "actually compiles".
-  #
-  # continue-on-error so a broken Vita build does not hold up a release of the
-  # four that do work. Remove it once this has gone green.
+  # The Vita build. Written without a VitaSDK to hand and debugged through this
+  # job, which found all four of the reasons it did not work: a shell without
+  # pipefail, a stub the image references but does not ship, an upstream
+  # ceil() without math.h, and -- the one that cost three hardware crashes --
+  # a missing -Wl,-q, without which the module loads unrelocated and faults
+  # before main().
   vita:
     name: Build Vita (vita2d)
     needs: verify
     runs-on: ubuntu-latest
-    continue-on-error: true
+    # continue-on-error is gone: this builds, runs, and plays against every
+    # other client. A break here is now a real break.
     container: vitasdk/vitasdk:latest
     steps:
       - uses: actions/checkout@v4
@@ -474,12 +475,34 @@ jobs:
       #
       # Building vita2d from source against the stubs that ARE installed
       # resolves it by construction, and takes about a minute.
+      - name: What the SDK provides
+        shell: bash
+        run: |
+          # Listed rather than guessed. Two stub names have been wrong already,
+          # and one CI run buys the real list outright.
+          echo "--- kernel-ish stubs ---"
+          ls "$VITASDK/arm-vita-eabi/lib/" | grep -iE "libSce(LibKernel|Iofilemgr|Sysmem|Processmgr|Thread|Rtc|Kernel)" || echo "(none)"
+
       - name: Build vita2d from source
         shell: bash
         run: |
           set -euo pipefail
           export PATH="$VITASDK/bin:$PATH"
           git clone --depth 1 https://github.com/xerpi/libvita2d.git /tmp/vita2d
+
+          # libvita2d's JPEG loader calls ceil() without including <math.h>.
+          # Older compilers accepted the implicit declaration; the GCC in this
+          # image rejects it, so the library will not build as published.
+          #
+          # Patched here rather than worked around with -Wno-implicit-function
+          # -declaration, because that flag would hide the same class of error
+          # in every other file too. We never call the JPEG loader -- the build
+          # simply compiles it.
+          if ! grep -q "math.h" /tmp/vita2d/libvita2d/source/vita2d_image_jpeg.c; then
+            sed -i '1i #include <math.h>' /tmp/vita2d/libvita2d/source/vita2d_image_jpeg.c
+            echo "patched vita2d_image_jpeg.c with <math.h>"
+          fi
+
           make -C /tmp/vita2d/libvita2d install
 
       - name: Build
@@ -492,13 +515,20 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: vita-build
-          path: vita/pong-vita.vpk
+          # The .elf goes up with the .vpk because the .vpk is stripped, and a
+          # Vita crash dump is a list of addresses with nothing to map them to.
+          # The first crash cost a round trip purely because the symbols had
+          # been thrown away at the point they became useful.
+          path: |
+            vita/pong-vita.vpk
+            vita/pong-vita-debug.elf
+            vita/hello.vpk
           if-no-files-found: warn
 
 
   cia:
     name: Build 3DS (.3dsx + .cia)
-    needs: [verify, mac, linux, windows]
+    needs: [verify, mac, linux, windows, vita]
     runs-on: ubuntu-latest
     permissions:
       contents: write      # required to create releases
@@ -593,7 +623,8 @@ jobs:
             printf '| `pong3ds.3dsx` | 3DS | Copy to `sd:/3ds/`, launch from the Homebrew Launcher. |\n'
             printf '| `pong-pc-macos-arm64.zip` | macOS (Apple silicon) | Unzip, run `./pong-pc`. SDL3 bundled. |\n'
             printf '| `pong-pc-windows-x86_64.zip` | Windows | Unzip, run `pong-pc.exe`. DLLs included. |\n'
-            printf '| `pong-pc-linux-x86_64.tar.gz` | Linux | Extract, run `./pong-pc`. SDL3 bundled. |\n\n'
+            printf '| `pong-pc-linux-x86_64.tar.gz` | Linux | Extract, run `./pong-pc`. SDL3 bundled. |\n'
+            printf '| `pong-vita.vpk` | PS Vita | Install with VitaShell. |\n\n'
             printf 'The Mac build speaks **raw TCP only** -- it plays against a server on your\n'
             printf 'network, not through the tunnel. For internet play from a desktop, open the\n'
             printf 'web client. Keyboard, mouse or a gamepad; a DualSense works as-is.\n\n'
@@ -618,7 +649,8 @@ jobs:
             3ds/pong3ds.3dsx \
             pong-pc-macos-arm64.zip \
             pong-pc-windows-x86_64.zip \
-            pong-pc-linux-x86_64.tar.gz
+            pong-pc-linux-x86_64.tar.gz \
+            pong-vita.vpk
 
           printf '### Released\n\n[%s](%s)\n' "$TAG" \
             "https://github.com/${GITHUB_REPOSITORY}/releases/tag/$TAG" >> "$GITHUB_STEP_SUMMARY"

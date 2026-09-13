@@ -40,7 +40,7 @@ when one is attached. Both shots above were captured from the running build;
 the second is a demo state, and the connected screen below is against a real
 server.
 
-### PS Vita — 960x544  *(layout preview; build not yet compiled)*
+### PS Vita — 960x544
 
 ![Vita](docs/previews/vita.png)
 
@@ -94,11 +94,17 @@ plays against a server on the LAN and not through the Cloudflare tunnel -- to
 play over the internet from a desktop, open the web client, which already does
 that properly.
 
-**Honest status.** The 3DS and PC builds are compiled and run here; the PC one
-was rendered and inspected. **The Vita build has never been compiled** -- there
-was no VitaSDK on the machine it was written on, so `src/gfx/vita/gfx_vita.c`
-and `vita/Makefile` are careful reading of the toolchain rather than anything
-that has executed. Expect to fix something on the first build.
+**Status.** All five build in CI and all five have played against each other on
+real hardware -- 3DS, macOS, Windows, Linux, PS Vita, plus the browser client.
+Fifteen pairings, every one confirmed.
+
+The Vita build was written without a VitaSDK to hand and debugged through CI and
+crash dumps from the console. Four things were wrong and none of them were the
+rendering: a container shell without `pipefail`, a stub library the SDK image
+references but does not ship, an upstream `ceil()` with no `<math.h>`, and a
+missing `-Wl,-q` -- without which the module loads unrelocated and faults before
+`main()` runs. A forty-line test app is what finally separated the platform from
+the game, and it should have been the first thing written rather than the last.
 
 ## The renderer seam
 

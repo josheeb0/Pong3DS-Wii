@@ -78,6 +78,16 @@ bool pong_gfx_init(const char *title);
  */
 void pong_gfx_request_size(int w, int h);
 
+/**
+ * Tells the backend a system dialog is on screen.
+ *
+ * Some platforms composite their own keyboard over the frame and need to be
+ * given the chance each frame -- the Vita will simply never draw it otherwise,
+ * which looks exactly like the application hanging. Platforms with nothing to
+ * do here ignore it.
+ */
+void pong_gfx_system_dialog(bool active);
+
 /** Real pixel extent of the output, for PONG_SURFACE_FULL layout. */
 void pong_gfx_output_size(int *w, int *h);
 
