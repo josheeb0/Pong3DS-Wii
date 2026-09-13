@@ -11,8 +11,8 @@
  * people sharing a keyboard.
  */
 
-import { createMatch, stepMatch, type MatchState } from '../../../server/src/sim/pong';
-import { Bot } from '../../../server/src/game/bot';
+import { createMatch, stepMatch, type MatchState } from '../../../shared/sim/pong';
+import { Bot } from '../../../shared/sim/bot';
 import { C } from '../../../shared/gen/protocol';
 import { FIELD_H_Q4 } from '../../../shared/sim/paddle';
 import type { View } from './interp';

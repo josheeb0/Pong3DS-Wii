@@ -16,7 +16,7 @@ import {
   PADDLE_X_L_Q,
   type MatchState,
   type PlayerInput,
-} from '../src/sim/pong.js';
+} from '../../shared/sim/pong.js';
 
 const idle: PlayerInput = { targetYQ4: FIELD_H_Q >> 1, buttons: 0 };
 

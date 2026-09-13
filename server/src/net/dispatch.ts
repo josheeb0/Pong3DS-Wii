@@ -21,7 +21,7 @@ import {
   unpadBytes,
   type Frame,
 } from '../../../shared/gen/protocol.js';
-import { FIELD_H_Q, PADDLE_HALF_Q } from '../sim/pong.js';
+import { FIELD_H_Q, PADDLE_HALF_Q } from '../../../shared/sim/pong.js';
 import type { Session, SessionManager } from './session.js';
 import type { Matchmaker } from '../game/matchmaker.js';
 

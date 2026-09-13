@@ -31,9 +31,9 @@ import {
   BALL_R_Q,
   type MatchState,
   type PlayerInput,
-} from '../sim/pong.js';
+} from '../../../shared/sim/pong.js';
 import type { Session, SnapshotSource } from '../net/session.js';
-import { Bot } from './bot.js';
+import { Bot } from '../../../shared/sim/bot.js';
 
 interface RingEntry {
   tick: number;

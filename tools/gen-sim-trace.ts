@@ -18,7 +18,7 @@
  */
 
 import { writeFileSync } from 'node:fs';
-import { createMatch, stepMatch, type MatchState } from '../server/src/sim/pong.js';
+import { createMatch, stepMatch, type MatchState } from '../shared/sim/pong.js';
 import { C } from '../shared/gen/protocol.js';
 
 const TICKS = 6000;
