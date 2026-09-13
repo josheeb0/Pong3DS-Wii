@@ -35,6 +35,39 @@ export const NEON: Palette = {
   glow: 'rgba(126, 231, 255, 0.35)',
 };
 
+/*
+ * The same values the handheld and desktop clients use, so the three look like
+ * one game rather than three ports of it. They are literals here rather than
+ * shared constants because the C side packs colours as 0xAABBGGRR and canvas
+ * wants CSS strings; a shared table would have to be translated either way.
+ */
+const FIELD_HI = '#0e1722';
+const FIELD_LO = '#06090e';
+const GHOST_L = 'rgba(27, 51, 68, 1)';
+const GHOST_R = 'rgba(56, 36, 64, 1)';
+const GHOST_BALL = 'rgba(53, 77, 96, 1)';
+
+/** Recent ball positions, for the trail. Module state because the renderer is
+ *  called fresh each frame and has nowhere else to keep it. */
+const TRAIL_LEN = 10;
+const trailX = new Float32Array(TRAIL_LEN);
+const trailY = new Float32Array(TRAIL_LEN);
+let trailHead = 0;
+let trailLive = false;
+
+function trailPush(x: number, y: number): void {
+  if (!trailLive) {
+    trailX.fill(x);
+    trailY.fill(y);
+    trailLive = true;
+    trailHead = 0;
+    return;
+  }
+  trailX[trailHead] = x;
+  trailY[trailHead] = y;
+  trailHead = (trailHead + 1) % TRAIL_LEN;
+}
+
 export interface RenderInput {
   view: View | null;
   /** Our locally predicted paddle, which overrides the interpolated one. */
@@ -80,22 +113,46 @@ export function render(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement,
 
   ctx.setTransform(scale, 0, 0, scale, ox, oy);
 
-  // Playfield border.
-  ctx.strokeStyle = pal.net;
-  ctx.lineWidth = 2;
-  ctx.strokeRect(1, 1, C.FIELD_W - 2, C.FIELD_H - 2);
+  // The field is a gradient, not a flat fill, and it is the single change that
+  // makes this read as a table rather than a black rectangle. Same treatment as
+  // the handheld and desktop clients.
+  const g = ctx.createLinearGradient(0, 0, 0, C.FIELD_H);
+  g.addColorStop(0, FIELD_HI);
+  g.addColorStop(1, FIELD_LO);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, C.FIELD_W, C.FIELD_H);
 
-  // Centre net.
-  ctx.setLineDash([12, 14]);
-  ctx.beginPath();
-  ctx.moveTo(C.FIELD_W / 2, 0);
-  ctx.lineTo(C.FIELD_W / 2, C.FIELD_H);
-  ctx.stroke();
-  ctx.setLineDash([]);
+  const mineLeft = input.mySide === 0;
+
+  // Goal lines in each player's colour, so which end is yours needs no caption.
+  ctx.fillStyle = mineLeft ? 'rgba(126,231,255,0.40)' : 'rgba(255,157,226,0.40)';
+  ctx.fillRect(0, 0, 2, C.FIELD_H);
+  ctx.fillStyle = mineLeft ? 'rgba(255,157,226,0.40)' : 'rgba(126,231,255,0.40)';
+  ctx.fillRect(C.FIELD_W - 2, 0, 2, C.FIELD_H);
+
+  // Top and bottom rails.
+  ctx.fillStyle = 'rgba(26,43,56,1)';
+  ctx.fillRect(0, 0, C.FIELD_W, 2);
+  ctx.fillRect(0, C.FIELD_H - 2, C.FIELD_W, 2);
+
+  // The net fades toward the rails rather than running at one opacity. A flat
+  // dashed line draws the eye to the edges; this keeps it in the middle where
+  // the play is.
+  const dash = C.FIELD_H / 17;
+  for (let y = dash * 0.25; y < C.FIELD_H - dash * 0.3; y += dash) {
+    const d = Math.abs((y - C.FIELD_H / 2) / (C.FIELD_H / 2));
+    ctx.fillStyle = `rgba(30,58,77,${(1 - d * 0.7).toFixed(3)})`;
+    ctx.fillRect(C.FIELD_W / 2 - 1.5, y, 3, dash * 0.5);
+  }
 
   const v = input.view;
   if (!v) {
+    // A ghost match, rather than text on an empty field. The handheld plays one
+    // behind its menu and it is what makes that screen feel alive; the browser
+    // has the same dead space and had nothing in it.
+    drawAttract(ctx);
     drawCentreText(ctx, pal, input.idleText ?? 'READY', 26);
+    trailLive = false;
     return;
   }
 
@@ -121,6 +178,24 @@ export function render(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement,
   if (v.state === Phase.PLAY || v.state === Phase.GOAL_FREEZE) {
     const bx = toPx(v.ballX);
     const by = toPx(v.ballY);
+
+    if (v.state === Phase.PLAY) trailPush(bx, by);
+
+    // Squares, oldest and smallest first. Alpha rises with the square of age so
+    // the tail disappears quickly instead of smearing.
+    for (let i = 0; i < TRAIL_LEN; i++) {
+      const idx = (trailHead + i) % TRAIL_LEN;
+      const age = i / TRAIL_LEN;
+      const sz = C.BALL_R * (0.2 + 0.7 * age);
+      // `?? 0` rather than a non-null assertion: the arrays are fixed-length and
+      // idx is always in range, but a silent 0 is a harmless dot in the corner
+      // while an assertion that turns out wrong is a crash mid-rally.
+      const tx = trailX[idx] ?? 0;
+      const ty = trailY[idx] ?? 0;
+      ctx.fillStyle = `rgba(255,255,255,${(age * age * 0.32).toFixed(3)})`;
+      ctx.fillRect(tx - sz, ty - sz, sz * 2, sz * 2);
+    }
+
     ctx.shadowColor = pal.glow;
     ctx.shadowBlur = 24;
     ctx.fillStyle = pal.ball;
@@ -128,6 +203,8 @@ export function render(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement,
     ctx.arc(bx, by, C.BALL_R, 0, Math.PI * 2);
     ctx.fill();
     ctx.shadowBlur = 0;
+  } else {
+    trailLive = false;
   }
 
   if (v.state === Phase.COUNTDOWN) {
@@ -172,6 +249,47 @@ function drawPaddle(ctx: CanvasRenderingContext2D, cx: number, cy: number, color
   ctx.closePath();
   ctx.fill();
   ctx.shadowBlur = 0;
+}
+
+/*
+ * A ghost match, drawn in field coordinates behind the idle text.
+ *
+ * Ported from the handheld and desktop clients. The paddles follow the ball
+ * LATE; that lag is what makes three moving shapes read as a rally rather than
+ * three independent animations.
+ */
+function drawAttract(ctx: CanvasRenderingContext2D): void {
+  // performance.now() rather than a frame counter: this renderer is called from
+  // requestAnimationFrame and keeps no counter of its own, and wall time gives
+  // the same motion whatever the refresh rate.
+  const t = performance.now() * 0.06;
+
+  const bx = C.FIELD_W / 2 + C.FIELD_W * 0.38 * Math.sin(t * 0.013);
+  const by = C.FIELD_H / 2 + C.FIELD_H * 0.32 * Math.sin(t * 0.021);
+  const ly = C.FIELD_H / 2 + C.FIELD_H * 0.28 * Math.sin(t * 0.021 - 0.6);
+  const ry = C.FIELD_H / 2 + C.FIELD_H * 0.28 * Math.sin(t * 0.021 - 1.1);
+
+  const ph = C.FIELD_H * 0.17;
+  const pw = 9;
+
+  ctx.fillStyle = GHOST_L;
+  ctx.fillRect(C.FIELD_W * 0.05, ly - ph / 2, pw, ph);
+  ctx.fillStyle = GHOST_R;
+  ctx.fillRect(C.FIELD_W * 0.95 - pw, ry - ph / 2, pw, ph);
+
+  for (let k = 7; k >= 1; k--) {
+    const tt = t - k * 2.2;
+    const tx = C.FIELD_W / 2 + C.FIELD_W * 0.38 * Math.sin(tt * 0.013);
+    const ty = C.FIELD_H / 2 + C.FIELD_H * 0.32 * Math.sin(tt * 0.021);
+    const sz = 5 - k * 0.45;
+    ctx.fillStyle = `rgba(53,77,96,${(1 - k / 8).toFixed(3)})`;
+    ctx.fillRect(tx - sz, ty - sz, sz * 2, sz * 2);
+  }
+
+  ctx.fillStyle = GHOST_BALL;
+  ctx.beginPath();
+  ctx.arc(bx, by, 6, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 function drawCentreText(ctx: CanvasRenderingContext2D, pal: Palette, text: string, size: number): void {
