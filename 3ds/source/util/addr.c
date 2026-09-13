@@ -93,6 +93,35 @@ static void derive_subnet(const char *ip, char *out, size_t cap)
     out[n] = '\0';
 }
 
+/*
+ * Copies a host into a fixed buffer, refusing rather than truncating.
+ *
+ * memcpy after an explicit length check, not snprintf. Both are safe, but only
+ * this one is safe in a way the COMPILER can see: GCC's -Wformat-truncation
+ * cannot connect the guard below to the snprintf calls three branches later, so
+ * it fails the build on a machine whose CC is gcc. CI never caught that because
+ * the conformance job forces CC=clang, and clang does not warn -- the code was
+ * fine and unbuildable at the same time.
+ *
+ * The duplication this removes mattered too: the length guard used web_host's
+ * capacity for anything that was not raw tcp://, while one of those paths
+ * writes into the SMALLER lan_host. No host could reach it -- that branch needs
+ * is_private_ipv4, which bounds the string at 15 characters -- but the guard
+ * was checking a different buffer from the one being written, which is a bug
+ * waiting for the condition above it to change.
+ */
+static bool set_host(char *dst, size_t cap, const char *src,
+                     char *err, size_t errcap)
+{
+    size_t n = strlen(src);
+    if (n >= cap) {
+        snprintf(err, errcap, "host too long (max %u)", (unsigned)(cap - 1));
+        return false;
+    }
+    memcpy(dst, src, n + 1);
+    return true;
+}
+
 bool pong_addr_parse(const char *input, PongNetConfig *net, char *err, size_t errcap)
 {
     char buf[160];
@@ -143,14 +172,6 @@ bool pong_addr_parse(const char *input, PongNetConfig *net, char *err, size_t er
         }
     }
 
-    /* Reject rather than truncate. A silently shortened hostname would resolve
-     * to somewhere the user did not ask for, which is worse than an error. */
-    size_t hostlen = strlen(host);
-    size_t cap = raw_tcp ? sizeof net->lan_host : sizeof net->web_host;
-    if (hostlen >= cap) {
-        snprintf(err, errcap, "host too long (max %u)", (unsigned)(cap - 1));
-        return false;
-    }
 
     /*
      * A bare private IP means the LAN server, so tcp:// need not be typed.
@@ -182,7 +203,7 @@ bool pong_addr_parse(const char *input, PongNetConfig *net, char *err, size_t er
          * outright when we are somewhere else, rather than stalling for the
          * full connect timeout on every launch to discover the obvious.
          */
-        snprintf(net->lan_host, sizeof net->lan_host, "%s", host);
+        if (!set_host(net->lan_host, sizeof net->lan_host, host, err, errcap)) return false;
         net->lan_port = port ? port : 8787;
         derive_subnet(host, net->lan_subnet, sizeof net->lan_subnet);
         net->mode = PONG_MODE_AUTO;
@@ -202,7 +223,7 @@ bool pong_addr_parse(const char *input, PongNetConfig *net, char *err, size_t er
          * proving the raw path works without the web path hiding a failure, and
          * it is not the thing you want from an address box.
          */
-        snprintf(net->lan_host, sizeof net->lan_host, "%s", host);
+        if (!set_host(net->lan_host, sizeof net->lan_host, host, err, errcap)) return false;
         net->lan_port = port ? port : 8787;
         /* Only an IP tells us which network it belongs to; for a hostname we
          * cannot know, so the attempt is made wherever we are. */
@@ -225,7 +246,7 @@ bool pong_addr_parse(const char *input, PongNetConfig *net, char *err, size_t er
         port = tls ? 443 : 80;
     }
 
-    snprintf(net->web_host, sizeof net->web_host, "%s", host);
+    if (!set_host(net->web_host, sizeof net->web_host, host, err, errcap)) return false;
     net->web_port = port;
     net->web_tls = tls;
     net->mode = PONG_MODE_WEB;

@@ -65,11 +65,26 @@ jobs:
         run: npm run --prefix server test
 
       # Proves the C the console runs agrees with the TypeScript the server
-      # runs, byte for byte, under ASan/UBSan. clang to match local dev.
-      - name: C codec conformance (vs TypeScript encoder)
+      # runs, byte for byte, under ASan/UBSan.
+      #
+      # BOTH compilers, because pinning one hid a build failure in the other.
+      # This step forced CC=clang "to match local dev", and the day local dev
+      # moved to a machine whose CC is gcc, three -Wformat-truncation errors
+      # were waiting in code that had been green for weeks. The tree was
+      # correct and unbuildable at the same time, and nothing said so.
+      #
+      # They disagree about more than warnings -- different UB sanitiser
+      # coverage, different optimisation assumptions -- so running both is
+      # worth the forty seconds.
+      - name: C conformance (clang)
         env:
           CC: clang
-        run: make -C 3ds/test -f Makefile.host run
+        run: make -C 3ds/test -f Makefile.host clean && make -C 3ds/test -f Makefile.host run
+
+      - name: C conformance (gcc)
+        env:
+          CC: gcc
+        run: make -C 3ds/test -f Makefile.host clean && make -C 3ds/test -f Makefile.host run
 
       - name: Install web deps
         run: npm ci --prefix web --no-audit --no-fund
