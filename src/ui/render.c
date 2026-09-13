@@ -118,26 +118,6 @@ static void dyn_wrap(const char *s, int align, float x, float y, float scale,
  * status line. Everything that used to be drawn at 0.29-0.38 is either bigger
  * now or gone.
  */
-/*
- * Five ways to start a match now, not three, on a screen that is still 320x240.
- *
- * The rows drop from 44px to 32 rather than the list scrolling. 30px is the
- * floor -- it is what a thumb needs, and it is what decided the utility row's
- * height -- so 32 keeps a margin while fitting five rows and the utility strip
- * in the 200px between the header and the bottom edge.
- */
-const PongRect PONG_MENU_RECT[MENU_COUNT] = {
-    [MENU_QUICK]    = {  10.0f,  36.0f, 300.0f, 32.0f },
-    [MENU_ROOM]     = {  10.0f,  71.0f, 300.0f, 32.0f },
-    [MENU_BOT]      = {  10.0f, 106.0f, 300.0f, 32.0f },
-    [MENU_LOCAL_AI] = {  10.0f, 141.0f, 300.0f, 32.0f },
-    [MENU_LOCAL_2P] = {  10.0f, 176.0f, 300.0f, 32.0f },
-    /* Four utility buttons across 300px: 72 wide with 4px gaps. */
-    [MENU_NAME]   = {  10.0f, 212.0f,  72.0f, 24.0f },
-    [MENU_SERVER] = {  86.0f, 212.0f,  72.0f, 24.0f },
-    [MENU_SOURCE] = { 162.0f, 212.0f,  72.0f, 24.0f },
-    [MENU_UPDATE] = { 238.0f, 212.0f,  72.0f, 24.0f },
-};
 
 bool pong_ui_hit(const PongRect *r, float x, float y)
 {
@@ -168,10 +148,14 @@ typedef struct { const char *label; const char *hint; } MenuLabel;
 
 static const MenuLabel MENU_LABEL[MENU_COUNT] = {
     [MENU_QUICK]  = { "QUICK MATCH", "play whoever is waiting" },
-    [MENU_ROOM]   = { "JOIN ROOM",   "same code = same game" },
-    [MENU_BOT]      = { "VS CPU",    "the server's bot" },
-    [MENU_LOCAL_AI] = { "VS AI",     "offline, no server" },
-    [MENU_LOCAL_2P] = { "2 PLAYERS", "D-PAD vs A/B/X/Y" },
+    /* Short hints on the half-width rows: they have about 100px of text area,
+     * and "same code = same game" needs 126 at a readable scale. The VS AI row
+     * shows its difficulty on that line instead of a hint, which is more use
+     * than a description anyway. */
+    [MENU_ROOM]     = { "JOIN ROOM", "by code" },
+    [MENU_BOT]      = { "VS CPU",    "server bot" },
+    [MENU_LOCAL_AI] = { "VS AI",     NULL },
+    [MENU_LOCAL_2P] = { "2 PLAYERS", "same 3DS" },
     [MENU_NAME]   = { "NAME",        NULL },
     [MENU_SERVER] = { "SERVER",      NULL },
     [MENU_SOURCE] = { "SOURCE",      NULL },
@@ -254,30 +238,44 @@ static void draw_menu(const PongHud *hud)
         panel(r, sel ? CLR_BTN_SEL : CLR_BTN, sel ? CLR_ACCENT : CLR_EDGE);
 
         if (primary) {
-            icon_for(i, r->x + 16.0f, r->y + (r->h - 14.0f) / 2.0f,
+            /*
+             * Text positions come from citro2d's line height, which is 30px at
+             * scale 1.0, rather than from eyeballing: a 0.55 label is 16.5px
+             * tall, so a hint at y+24 clears it by 7 and cannot collide the way
+             * the last layout did.
+             *
+             * The wide row can afford a bigger label; the narrow ones cannot.
+             */
+            const bool wide = (r->w > 200.0f);
+            const float lab_s  = wide ? 0.60f : 0.55f;
+            const float hint_s = wide ? 0.44f : 0.40f;
+            const float text_x = r->x + (wide ? 46.0f : 40.0f);
+
+            icon_for(i, r->x + (wide ? 16.0f : 12.0f),
+                     r->y + (r->h - 14.0f) / 2.0f,
                      sel ? CLR_ACCENT : CLR_DIM, sel ? CLR_ACCENT2 : CLR_DIM);
-            /* Both lines moved up with the row height: at 32px the old y+24
-             * hint hung 2px past the bottom edge. */
-            dyn(MENU_LABEL[i].label, 0, r->x + 46.0f, r->y + 2.0f, 0.56f,
+
+            dyn(MENU_LABEL[i].label, 0, text_x, r->y + 5.0f, lab_s,
                 sel ? CLR_TEXT : CLR_DIM);
-            if (MENU_LABEL[i].hint) {
-                dyn(MENU_LABEL[i].hint, 0, r->x + 46.0f, r->y + 18.0f, 0.42f,
+
+            /* The second line is the hint, except on VS AI where it is the
+             * difficulty -- which is the thing you actually want to see, and
+             * what LEFT/RIGHT changes while the row is selected. */
+            if (i == MENU_LOCAL_AI) {
+                dyn(pong_bot_level_name((PongBotLevel)hud->ai_level), 0,
+                    text_x, r->y + 24.0f, hint_s,
+                    sel ? CLR_ACCENT : CLR_FAINT);
+            } else if (MENU_LABEL[i].hint) {
+                dyn(MENU_LABEL[i].hint, 0, text_x, r->y + 24.0f, hint_s,
                     sel ? CLR_DIM : CLR_FAINT);
             }
-            /* The offline opponent's difficulty, on its own row. Changed with
-             * LEFT/RIGHT, which is why it sits where a value would and not in
-             * the hint: a hint is prose, this is a setting. */
-            if (i == MENU_LOCAL_AI) {
-                dyn(pong_bot_level_name((PongBotLevel)hud->ai_level),
-                    PONG_ALIGN_RIGHT, r->x + r->w - 34.0f, r->y + 9.0f, 0.5f,
-                    sel ? CLR_ACCENT : CLR_FAINT);
-            }
+
             /* A chevron on the active row, pointing at the thing A will do. */
             if (sel) {
-                float cx = r->x + r->w - 20.0f, cy = r->y + r->h / 2.0f;
-                for (int k = 0; k < 6; k++) {
-                    pong_gfx_rect(cx + k, cy - 6.0f + k, 2.0f, 2.5f, CLR_ACCENT);
-                    pong_gfx_rect(cx + k, cy + 5.0f - k, 2.0f, 2.5f, CLR_ACCENT);
+                float cx = r->x + r->w - 16.0f, cy = r->y + r->h / 2.0f;
+                for (int k = 0; k < 5; k++) {
+                    pong_gfx_rect(cx + k, cy - 5.0f + k, 2.0f, 2.5f, CLR_ACCENT);
+                    pong_gfx_rect(cx + k, cy + 4.0f - k, 2.0f, 2.5f, CLR_ACCENT);
                 }
             }
         } else {
