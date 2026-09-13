@@ -48,6 +48,7 @@ CFLAGS   := -std=c99 -Wall -Wextra -O2 -fno-lto \
 LIBS     := -lvita2d \
             -lSceDisplay_stub -lSceGxm_stub -lSceSysmodule_stub \
             -lSceCtrl_stub -lSceTouch_stub -lSceCommonDialog_stub \
+            -lSceAudio_stub \
             -lSceAppMgr_stub \
             -lSceNet_stub -lSceNetCtl_stub \
             -lSceLibKernel_stub -lSceIofilemgr_stub -lSceSysmem_stub \
