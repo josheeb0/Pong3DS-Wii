@@ -48,6 +48,8 @@ export const Platform = {
   WEB: 1,
   N3DS: 2,
   WII: 3,
+  PC: 4,
+  VITA: 5,
 } as const;
 export type Platform = typeof Platform[keyof typeof Platform];
 export const PlatformName: Record<number, string> = {
@@ -55,6 +57,8 @@ export const PlatformName: Record<number, string> = {
   1: "WEB",
   2: "N3DS",
   3: "WII",
+  4: "PC",
+  5: "VITA",
 };
 
 export const TransportKind = {

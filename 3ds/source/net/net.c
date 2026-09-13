@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>   /* strcasecmp */
 #include <errno.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -79,6 +80,21 @@ static bool on_lan(const char *subnet, char *ip_out, size_t ip_cap)
     return s && strncmp(s, subnet, strlen(subnet)) == 0;
 }
 
+/*
+ * Is this a .local (mDNS/Bonjour) name?
+ *
+ * Worth calling out by name because the failure is otherwise baffling: the
+ * address works from every laptop on the network and fails only on the console.
+ * .local is resolved by multicast DNS, which the 3DS has no resolver for -- it
+ * asks the configured DNS server, which has never heard of the name. Nothing
+ * about the address is wrong; the console simply cannot look it up.
+ */
+static bool is_mdns_name(const char *h)
+{
+    size_t n = h ? strlen(h) : 0;
+    return n > 6 && strcasecmp(h + n - 6, ".local") == 0;
+}
+
 static int lan_connect(const char *host, uint16_t port, uint32_t timeout_ms, char *err, size_t errcap)
 {
     struct sockaddr_in addr;
@@ -89,7 +105,13 @@ static int lan_connect(const char *host, uint16_t port, uint32_t timeout_ms, cha
     if (inet_pton(AF_INET, host, &addr.sin_addr) != 1) {
         struct hostent *he = gethostbyname(host);
         if (!he || !he->h_addr_list[0]) {
-            snprintf(err, errcap, "cannot resolve %s", host);
+            if (is_mdns_name(host)) {
+                snprintf(err, errcap,
+                         "%s is a .local name - the 3DS cannot resolve those, use the IP",
+                         host);
+            } else {
+                snprintf(err, errcap, "cannot resolve %s", host);
+            }
             return -1;
         }
         memcpy(&addr.sin_addr, he->h_addr_list[0], sizeof addr.sin_addr);

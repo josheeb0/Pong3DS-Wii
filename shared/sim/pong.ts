@@ -20,9 +20,9 @@
  * Paddle and ball positions are CENTRES.
  */
 
-import { C } from '../../../shared/gen/protocol.js';
-import { SIN_Q12, COS_Q12 } from '../../../shared/gen/trig.js';
-import { stepPaddle as sharedStepPaddle } from '../../../shared/sim/paddle.js';
+import { C } from '../gen/protocol.js';
+import { SIN_Q12, COS_Q12 } from '../gen/trig.js';
+import { stepPaddle as sharedStepPaddle } from './paddle.js';
 
 /* ------------------------------------------------------------------ derived */
 

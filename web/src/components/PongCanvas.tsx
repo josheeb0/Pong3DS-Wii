@@ -69,6 +69,7 @@ export default function PongCanvas({ client }: { client: GameClient }) {
       e.preventDefault();
       fromPointer(e.clientY);
     };
+
     el.addEventListener('pointermove', onMove, { passive: false });
     el.addEventListener('pointerdown', onMove, { passive: false });
 
@@ -90,10 +91,29 @@ export default function PongCanvas({ client }: { client: GameClient }) {
     let raf = 0;
     const pump = () => {
       raf = requestAnimationFrame(pump);
+
+      /*
+       * With two people at one keyboard the keys split: W/S on the left of the
+       * board drives the left paddle, the arrow cluster on the right drives the
+       * right one. Everywhere else both sets drive the only paddle there is --
+       * taking half of them away from a solo player for the sake of uniformity
+       * would be worse.
+       */
+      const twoUp = client.inLocal && client.localMode === 'two-player';
+
       let dir = 0;
-      if (held.has('ArrowUp') || held.has('w') || held.has('W')) dir -= 1;
-      if (held.has('ArrowDown') || held.has('s') || held.has('S')) dir += 1;
+      if (held.has('w') || held.has('W')) dir -= 1;
+      if (held.has('s') || held.has('S')) dir += 1;
+      if (!twoUp && held.has('ArrowUp')) dir -= 1;
+      if (!twoUp && held.has('ArrowDown')) dir += 1;
       if (dir !== 0) client.nudgeTarget(dir * C.MAX_PADDLE_SPEED_Q4);
+
+      if (twoUp) {
+        let d2 = 0;
+        if (held.has('ArrowUp')) d2 -= 1;
+        if (held.has('ArrowDown')) d2 += 1;
+        if (d2 !== 0) client.nudgeP2(d2 * C.MAX_PADDLE_SPEED_Q4);
+      }
     };
     pump();
 

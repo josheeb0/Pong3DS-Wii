@@ -38,9 +38,9 @@ include $(DEVKITARM)/3ds_rules
 #---------------------------------------------------------------------------------
 TARGET		:=	pong3ds
 BUILD		:=	build
-SOURCES		:=	source source/net source/game source/ui source/util
+SOURCES		:=	source source/net source/game source/util ../src/ui ../src/sim ../src/gfx/3ds
 DATA		:=	data
-INCLUDES	:=	include source source/net source/game source/ui source/util vendor/mbedtls/include
+INCLUDES	:=	include source source/net source/game source/util ../src ../src/sim ../src/ui ../src/gfx ../src/gfx/3ds vendor/mbedtls/include
 GRAPHICS	:=	gfx
 #GFXBUILD	:=	$(BUILD)
 ROMFS		:=	romfs
@@ -64,6 +64,7 @@ CFLAGS	:=	-g -Wall -O2 -mword-relocations \
 # starts from a fresh checkout so it is unaffected; locally, `make clean` first
 # if the stamped number matters.
 BUILD_ID ?= 0
+
 
 CFLAGS	+=	$(INCLUDE) -D__3DS__ -DMBEDTLS_CONFIG_FILE='"mbedtls_config_3ds.h"' -DPONG_BUILD_ID=$(BUILD_ID)
 

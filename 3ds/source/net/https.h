@@ -82,6 +82,11 @@ void https_close(HttpsConn *c);
 typedef struct {
     int      status;        /* HTTP status code, e.g. 200 / 204 / 404 */
     size_t   body_len;
+    /* What the server SAID the body would be, recorded before it is read so a
+     * response too big for the buffer can say by how much instead of returning
+     * a bare error code. -1 when the response carried no Content-Length. */
+    long     content_length;
+    size_t   body_cap;
     uint32_t elapsed_ms;
     /* Value of a single response header we care about, or empty. */
     char     session[64];

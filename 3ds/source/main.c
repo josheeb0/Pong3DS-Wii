@@ -22,6 +22,8 @@
 #include "client.h"
 #include "net.h"
 #include "render.h"
+#include "pong_local.h"
+#include "gfx.h"
 #include "config.h"
 #include "update.h"
 #include "addr.h"
@@ -59,6 +61,7 @@ typedef struct {
     uint32_t last_input_ms;
     uint32_t last_ping_ms;
     uint32_t frame;
+    uint32_t fps;
 
     char status[96];
     char detail[96];
@@ -66,6 +69,15 @@ typedef struct {
     char addr[PONG_ADDR_MAX];
     char room[PONG_ROOM_CODE_BYTES + 1];
     int  menu_sel;
+
+    /* A match played on this console. When active it is the authority and the
+     * network client is not consulted. */
+    PongLocal   local;
+    bool        in_local;
+    int32_t     p2_target;
+    /* The offline opponent's difficulty. Lives here rather than on the hud
+     * because the hud is rebuilt from scratch every frame. */
+    int         ai_level;
 } App;
 
 static void send_hello(App *a);
@@ -119,6 +131,36 @@ static bool ask_room_code(App *a)
 }
 
 /** Opens the software keyboard and applies whatever the user typed. */
+/*
+ * Asks for the name the other player sees.
+ *
+ * Stored in the same config as everything else, so it is typed once. Sent in
+ * HELLO, which the server already relays to the opponent in MATCH_START -- the
+ * plumbing was there from the start, with nothing on the console to fill it in.
+ */
+static void edit_player_name(App *a)
+{
+    char buf[sizeof a->cfg.player_name];
+    snprintf(buf, sizeof buf, "%s", a->cfg.player_name);
+
+    SwkbdState kb;
+    /* NORMAL rather than QWERTY, for the same reason as the address box: the
+     * QWERTY layout greys out its symbol page, and a name is exactly the sort
+     * of thing someone will want a symbol in. */
+    swkbdInit(&kb, SWKBD_TYPE_NORMAL, 2, (int)sizeof buf - 1);
+    swkbdSetInitialText(&kb, buf);
+    swkbdSetHintText(&kb, "shown to the other player");
+    swkbdSetButton(&kb, SWKBD_BUTTON_LEFT, "Cancel", false);
+    swkbdSetButton(&kb, SWKBD_BUTTON_RIGHT, "Save", true);
+    swkbdSetValidation(&kb, SWKBD_NOTEMPTY_NOTBLANK, 0, 0);
+
+    if (swkbdInputText(&kb, buf, sizeof buf) != SWKBD_BUTTON_RIGHT) return;
+
+    snprintf(a->cfg.player_name, sizeof a->cfg.player_name, "%s", buf);
+    pong_config_save(&a->cfg);
+    snprintf(a->message, sizeof a->message, "you are '%s'", a->cfg.player_name);
+}
+
 static void edit_server_address(App *a)
 {
     char buf[PONG_ADDR_MAX];
@@ -137,7 +179,22 @@ static void edit_server_address(App *a)
     pong_addr_format(&a->cfg.net, a->addr, sizeof a->addr);
     /* Persist immediately: typing an address on a 3DS keyboard once is enough. */
     pong_config_save(&a->cfg);
-    snprintf(a->message, sizeof a->message, "saved");
+
+    /* Say which path was configured. A bare private IP is taken to mean the LAN
+     * fast path, and reinterpreting what someone typed without telling them is
+     * how a setting ends up mysteriously not doing what they expected. */
+    if (a->cfg.net.lan_host[0] && a->cfg.net.mode != PONG_MODE_LAN) {
+        /* Says both halves on purpose: the whole worry with setting a LAN
+         * address on a handheld is whether it still works away from home. */
+        snprintf(a->message, sizeof a->message, "LAN %s at 60Hz, %s elsewhere",
+                 a->cfg.net.lan_host,
+                 a->cfg.net.web_host[0] ? a->cfg.net.web_host : "no web host set");
+    } else if (a->cfg.net.lan_host[0]) {
+        snprintf(a->message, sizeof a->message, "LAN only: %s:%u",
+                 a->cfg.net.lan_host, (unsigned)a->cfg.net.lan_port);
+    } else {
+        snprintf(a->message, sizeof a->message, "saved: %s", a->addr);
+    }
 }
 
 /*
@@ -350,6 +407,61 @@ static void pump_network(App *a, uint32_t now_ms)
 
 /* ------------------------------------------------------------------ input */
 
+/* Online a target goes to the network client; locally it goes into the
+ * simulation. One place decides, so touch, circle pad and d-pad need not. */
+static void set_my_target(App *a, int32_t t)
+{
+    if (t < 0) t = 0;
+    if (t > PONG_FIELD_H_Q4) t = PONG_FIELD_H_Q4;
+    if (a->in_local) pong_local_set_target(&a->local, 0, t);
+    else pong_client_set_target(&a->client, t);
+}
+
+static int32_t my_target(const App *a)
+{
+    return a->in_local ? a->local.target_l : a->client.target_y;
+}
+
+/*
+ * Player two, on a console with one set of controls.
+ *
+ * A/B/X/Y, because the right hand is already there and the left half of the
+ * controls stays exactly what a solo player uses -- nothing has to be
+ * relearned to play alone again. X is up and B is down, matching where they
+ * physically sit on the face rather than any convention.
+ */
+static void read_p2_input(App *a, u32 kHeld)
+{
+    int32_t step = 0;
+    if (kHeld & KEY_X) step -= PONG_MAX_PADDLE_SPEED_Q4;
+    if (kHeld & KEY_B) step += PONG_MAX_PADDLE_SPEED_Q4;
+
+    if (step != 0) {
+        int32_t t = a->p2_target + step;
+        if (t < 0) t = 0;
+        if (t > PONG_FIELD_H_Q4) t = PONG_FIELD_H_Q4;
+        a->p2_target = t;
+    }
+    pong_local_set_target(&a->local, 1, a->p2_target);
+}
+
+static void begin_local(App *a, PongLocalMode mode)
+{
+    pong_local_start(&a->local, mode, (PongBotLevel)a->ai_level,
+                     (uint32_t)osGetTime() | 1u, PONG_WIN_SCORE);
+    a->in_local = true;
+    a->p2_target = PONG_FIELD_H_Q4 / 2;
+    a->screen = SCREEN_PLAY;
+    a->client.my_side = 0;
+}
+
+static void end_local(App *a)
+{
+    a->in_local = false;
+    a->local.active = false;
+    a->screen = SCREEN_TITLE;
+}
+
 static void read_input(App *a, u32 kHeld)
 {
     /*
@@ -360,7 +472,7 @@ static void read_input(App *a, u32 kHeld)
     if (kHeld & KEY_TOUCH) {
         touchPosition tp;
         hidTouchRead(&tp);
-        pong_client_set_target(&a->client, (int32_t)tp.py * 32);
+        set_my_target(a, (int32_t)tp.py * 32);
         return;
     }
 
@@ -372,16 +484,16 @@ static void read_input(App *a, u32 kHeld)
     hidCircleRead(&cp);
     if (cp.dy > 20 || cp.dy < -20) {
         int32_t step = (-(int32_t)cp.dy * PONG_MAX_PADDLE_SPEED_Q4) / 156;
-        pong_client_set_target(&a->client, a->client.target_y + step);
+        set_my_target(a, my_target(a) + step);
         return;
     }
 
     /* D-pad moves at exactly the clamp speed. KEY_UP/KEY_DOWN also cover the
      * circle pad, so this is checked after the analog read. */
     if (kHeld & KEY_UP) {
-        pong_client_set_target(&a->client, a->client.target_y - PONG_MAX_PADDLE_SPEED_Q4);
+        set_my_target(a, my_target(a) - PONG_MAX_PADDLE_SPEED_Q4);
     } else if (kHeld & KEY_DOWN) {
-        pong_client_set_target(&a->client, a->client.target_y + PONG_MAX_PADDLE_SPEED_Q4);
+        set_my_target(a, my_target(a) + PONG_MAX_PADDLE_SPEED_Q4);
     }
 }
 
@@ -417,14 +529,9 @@ static void send_input(App *a, uint32_t now_ms)
 int main(void)
 {
     romfsInit();
-    gfxInitDefault();
-    C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);
-    C2D_Init(C2D_DEFAULT_MAX_OBJECTS);
-    C2D_Prepare();
-    pong_render_init();
-
-    C3D_RenderTarget *top = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
-    C3D_RenderTarget *bot = C2D_CreateScreenTarget(GFX_BOTTOM, GFX_LEFT);
+    /* Screens, targets and text buffers all belong to the backend now; this
+     * file no longer knows citro2d exists. */
+    pong_gfx_init("Pong3DS");
 
     static App app;
     memset(&app, 0, sizeof app);
@@ -438,6 +545,9 @@ int main(void)
     pong_config_load(&app.cfg);
     pong_addr_format(&app.cfg.net, app.addr, sizeof app.addr);
     app.screen = SCREEN_TITLE;
+    /* NORMAL, not the zero a memset leaves: EASY as the default would have
+     * every first-time player meet the weakest opponent. */
+    app.ai_level = PONG_BOT_NORMAL;
 
     pong_log_section("configuration");
     pong_log("server address : %s", app.addr);
@@ -483,8 +593,53 @@ int main(void)
         u32 kHeld = hidKeysHeld();
         if (kDown & KEY_START) break;
 
+        /*
+         * B leaves whatever is going on and returns to the menu.
+         *
+         * START quits the whole application, which is the wrong tool for
+         * abandoning a match -- and was the only binding there was, so leaving
+         * a game meant closing the game. The title screen has its own uses for
+         * B and A, so this is deliberately scoped to the screens where there is
+         * something to leave.
+         */
+        /*
+         * B is player two's DOWN in a two-player match, so it cannot also mean
+         * "leave" there -- the second player would end the game every time they
+         * moved down. SELECT leaves instead, and only in that one mode, so B
+         * keeps its usual meaning everywhere else.
+         */
+        const bool b_is_player_two = app.in_local &&
+                                     app.local.mode == PONG_LOCAL_VS_HUMAN &&
+                                     app.screen == SCREEN_PLAY;
+
+        if (((kDown & KEY_B) && !b_is_player_two && app.screen != SCREEN_TITLE) ||
+            (b_is_player_two && (kDown & KEY_SELECT))) {
+            if (app.in_local) { end_local(&app); continue; }
+            if (app.net) { pong_net_close(app.net); app.net = NULL; }
+            pong_client_reset_match(&app.client);
+            app.acc_len = 0;
+            app.message[0] = '\0';
+            app.screen = SCREEN_TITLE;
+            pong_log("left the match (B)");
+            continue;
+        }
+
         uint32_t now = (uint32_t)osGetTime();
         app.frame++;
+
+        /* Frames actually drawn in the last second. Counted here rather than
+         * derived from a delta so a single slow frame does not read as a
+         * collapse. */
+        {
+            static uint32_t fps_window = 0, fps_count = 0;
+            if (fps_window == 0) fps_window = now;
+            fps_count++;
+            if (now - fps_window >= 1000) {
+                app.fps = fps_count;
+                fps_count = 0;
+                fps_window = now;
+            }
+        }
 
         /* ---- state machine ---------------------------------------------- */
         if (app.screen == SCREEN_TITLE) {
@@ -495,6 +650,14 @@ int main(void)
             if (kDown & KEY_UP)   app.menu_sel = (app.menu_sel + MENU_COUNT - 1) % MENU_COUNT;
 
             int activate = -1;
+            /* LEFT/RIGHT change a row's value, which today is only the
+             * offline opponent's difficulty. */
+            if (app.menu_sel == MENU_LOCAL_AI) {
+                int n = PONG_BOT_LEVEL_COUNT;
+                if (kDown & KEY_RIGHT) app.ai_level = (app.ai_level + 1) % n;
+                if (kDown & KEY_LEFT)  app.ai_level = (app.ai_level + n - 1) % n;
+            }
+
             if (kDown & KEY_A) activate = app.menu_sel;
             if (kDown & KEY_TOUCH) {
                 touchPosition tp;
@@ -502,6 +665,13 @@ int main(void)
                 int hit = pong_ui_menu_hit((float)tp.px, (float)tp.py);
                 if (hit >= 0) { app.menu_sel = hit; activate = hit; }
             }
+
+            /* The local modes need no network at all, so they are dispatched
+             * before the readiness check that the online ones sit behind. On a
+             * console with no wifi the rest of the menu is unusable and these
+             * two still work, which is most of the point of having them. */
+            if (activate == MENU_LOCAL_AI) { begin_local(&app, PONG_LOCAL_VS_AI); activate = -1; }
+            else if (activate == MENU_LOCAL_2P) { begin_local(&app, PONG_LOCAL_VS_HUMAN); activate = -1; }
 
             if (activate >= 0 && net_ready) {
                 app.message[0] = '\0';
@@ -517,6 +687,7 @@ int main(void)
                 case MENU_ROOM:
                     if (ask_room_code(&app)) begin_connect(&app, PONG_JOIN_MODE_ROOM_CODE);
                     break;
+                case MENU_NAME:   edit_player_name(&app); break;
                 case MENU_SERVER: edit_server_address(&app); break;
                 case MENU_SOURCE: {
                     /* Cycle the presets. A hand-edited config that matches none
@@ -561,7 +732,21 @@ int main(void)
         }
 
         /* ---- network + simulation ---------------------------------------- */
-        if (app.net) {
+        /*
+         * A local match is stepped here instead of the network being pumped.
+         * The authority is in this process, so there is nothing to receive and
+         * nothing to predict -- the view is read straight out of the
+         * simulation, which also means no render delay on a local game.
+         */
+        if (app.in_local) {
+            if (app.screen == SCREEN_PLAY) {
+                read_input(&app, kHeld);
+                if (app.local.mode == PONG_LOCAL_VS_HUMAN) read_p2_input(&app, kHeld);
+            }
+            pong_local_advance(&app.local, 17);
+            if (app.local.sim.state == PONG_SIM_GAME_OVER)
+                app.screen = SCREEN_GAMEOVER;
+        } else if (app.net) {
             pump_network(&app, now);
 
             if (pong_net_state(app.net) == PONG_LINK_FAILED && app.screen != SCREEN_ERROR) {
@@ -578,13 +763,15 @@ int main(void)
         }
 
         PongView view;
-        pong_client_update(&app.client, now, &view);
+        if (app.in_local) pong_local_view(&app.local, &view);
+        else pong_client_update(&app.client, now, &view);
 
         /* ---- hud ---------------------------------------------------------- */
         PongHud hud;
         memset(&hud, 0, sizeof hud);
         hud.screen = app.screen;
         hud.frame = app.frame;
+        hud.ai_level = app.ai_level;
         hud.menu_sel = app.menu_sel;
         hud.build_id = PONG_BUILD_ID;
         /* Only meaningful while waiting in a room someone else must join. */
@@ -594,6 +781,10 @@ int main(void)
                                                   app.cfg.gh_owner, app.cfg.gh_repo,
                                                   src_label, sizeof src_label);
         hud.my_side = app.client.my_side;
+        hud.my_name = app.cfg.player_name;
+        /* Empty until MATCH_START arrives, which is correct -- there is no
+         * opponent to name while we are still queueing. */
+        hud.opp_name = app.client.opp_name;
         hud.slow_mode = app.client.slow_mode;
         hud.message = app.message;
         hud.diag = app.net ? pong_net_diag(app.net) : NULL;
@@ -601,31 +792,34 @@ int main(void)
 
         if (app.net) {
             snprintf(app.status, sizeof app.status, "%s", pong_net_describe(app.net));
-            snprintf(app.detail, sizeof app.detail, "RTT %lums  %luHz  +%lums  vs %s",
+            /* polls/s is the request rate, NOT the snapshot rate -- they were
+             * conflated once already while chasing a stutter, so both are shown
+             * and both are labelled. */
+            snprintf(app.detail, sizeof app.detail,
+                     "RTT %lu  %lu poll/s  %lu snap/s  buf %lu  %lu fps",
                      (unsigned long)pong_net_rtt(app.net),
                      (unsigned long)pong_net_hz(app.net),
+                     (unsigned long)app.client.snap_hz,
                      (unsigned long)app.client.render_delay_ms,
-                     app.client.opp_name[0] ? app.client.opp_name : "?");
+                     (unsigned long)app.fps);
             hud.status_line = app.status;
             hud.detail_line = app.detail;
+            hud.fps = app.fps;
         } else {
             hud.status_line = "not connected";
             hud.detail_line = app.cfg.net.lan_host;
         }
 
         /* ---- draw --------------------------------------------------------- */
-        C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
-        pong_render_frame(top, bot, &view, &hud);
-        C3D_FrameEnd(0);
+        pong_gfx_frame_begin();
+        pong_render_frame(&view, &hud);
+        pong_gfx_frame_end();
     }
 
     if (app.net) pong_net_close(app.net);
     pong_log_section("session end");
     pong_log_close();
-    pong_render_exit();
-    C2D_Fini();
-    C3D_Fini();
-    gfxExit();
+    pong_gfx_exit();
     romfsExit();
     return 0;
 }

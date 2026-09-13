@@ -21,4 +21,41 @@ bool pong_gh_first_tag(const char *json, char *out, size_t cap);
 /** "build-31" -> 31. Returns 0 when the tag carries no number. */
 uint32_t pong_gh_build_from_tag(const char *tag);
 
+/** The first release's `name` field, alongside its tag. */
+bool pong_gh_first_name(const char *json, char *out, size_t cap);
+
+/**
+ * The build number of a release, from its name if it says one and its tag
+ * otherwise.
+ *
+ * The tag alone is not enough. Per-commit releases are tagged `build-93` and
+ * parse cleanly, but a version tag like `v1.1.1` yields 1 -- so a console on
+ * build 93 compared 1 against 93, decided it was newer, and reported itself up
+ * to date while sitting two releases behind. Releases carry "build N" in their
+ * name for exactly this reason.
+ */
+uint32_t pong_gh_build_number(const char *name, const char *tag);
+
+/**
+ * The highest build number across every release in the document, and the tag
+ * that carries it. Returns 0 when the document holds no usable release.
+ *
+ * Use this rather than reading the first release: GitHub does not return the
+ * list newest-first. A newly published build-110 was served at position seven,
+ * behind a build-87 four hours older, while position one stayed on the newest
+ * non-prerelease -- so a console reading only the first entry never sees a new
+ * build at all.
+ */
+uint32_t pong_gh_best_release(const char *json, char *out_tag, size_t cap);
+
+/**
+ * The highest `build-N` tag in a GitHub /tags response, and that tag.
+ * Returns 0 when no tag names a build.
+ *
+ * Preferred over reading the releases list: all of this repository's tags fit
+ * in 19KB where twenty releases run past 200KB, and taking the maximum needs no
+ * assumption about the order GitHub returns.
+ */
+uint32_t pong_gh_best_build_tag(const char *json, char *out_tag, size_t cap);
+
 #endif /* PONG_GHPARSE_H */

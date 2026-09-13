@@ -12,9 +12,12 @@
  *      installed title the updater reports the new build and the URL, and you
  *      install it with FBI -- it does not pretend to have updated itself.
  *
- *   2. The running .3dsx is already loaded into memory, so overwriting the file
- *      on disk is safe; the new build is picked up on the next launch. We do
- *      not try to relaunch ourselves.
+ *   2. The running .3dsx is picked up again only on the next launch; we do not
+ *      try to relaunch ourselves. Replacing it is not as simple as it looks --
+ *      the Homebrew Launcher holds the running file open, so the directory
+ *      entry may refuse to be renamed or removed and the contents have to be
+ *      rewritten in place. pong_update_download() handles both, and is written
+ *      so that no failure can leave you without a working copy.
  *
  * For development, none of this is the fast path -- `make send` pushes a build
  * over wifi with 3dslink in about a second and never touches the SD card.
@@ -23,15 +26,30 @@
 #include "update.h"
 #include "https.h"
 #include "ghparse.h"
+#include "log.h"
 
 #include <3ds.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <errno.h>
 
 #define MANIFEST_MAX 512
 #define DOWNLOAD_MAX (2 * 1024 * 1024)   /* the .3dsx is ~420KB; 2MB is slack */
-#define GH_JSON_MAX  (24 * 1024)
+/* Tags, not releases.
+ *
+ * GitHub does not return releases newest-first -- a freshly published build-110
+ * came back at position SEVEN, behind a build-87 four hours older -- so the
+ * newest build can only be found by reading the whole list and taking the
+ * maximum. Done with releases that meant a 230KB response, which the console
+ * refused outright (rc -7, and the check stopped working entirely).
+ *
+ * Tags answer the same question for a fraction of the size, because a tag is a
+ * name and two URLs while a release carries its assets and body: all
+ * thirty-eight tags here arrive in 19KB, about what ONE release costs. */
+#define GH_TAGS_PER_PAGE 100
+#define GH_JSON_MAX  (64 * 1024)
 
 /* Checks GitHub Releases directly, so an un-redeployed server cannot hide a
  * newer build. */
@@ -46,7 +64,8 @@ static PongUpdateResult check_github(const PongNetConfig *net, uint32_t local_bu
 
     char url[256];
     snprintf(url, sizeof url,
-             "https://api.github.com/repos/%s/%s/releases?per_page=1", owner, repo);
+             "https://api.github.com/repos/%s/%s/tags?per_page=%d",
+             owner, repo, GH_TAGS_PER_PAGE);
 
     static uint8_t body[GH_JSON_MAX];
     HttpsResponse resp;
@@ -54,24 +73,35 @@ static PongUpdateResult check_github(const PongNetConfig *net, uint32_t local_bu
                                    net->web_verify, 3, &resp);
 
     if (rc != HTTPS_OK || resp.status != 200) {
-        snprintf(out->message, sizeof out->message,
-                 "GitHub check failed (rc %d, HTTP %d)", (int)rc, resp.status);
+        if (rc == HTTPS_ERR_TOOBIG && resp.content_length > 0) {
+            /* The one failure that a bare code cannot explain: say which two
+             * numbers disagreed, since the fix depends entirely on that. */
+            snprintf(out->message, sizeof out->message,
+                     "GitHub sent %ldKB, buffer holds %uKB",
+                     resp.content_length / 1024, (unsigned)(resp.body_cap / 1024));
+        } else {
+            snprintf(out->message, sizeof out->message,
+                     "GitHub check failed (rc %d, HTTP %d)", (int)rc, resp.status);
+        }
         return PONG_UPDATE_ERROR;
     }
 
     body[resp.body_len] = '\0';
 
+    /* Every tag is read and the largest build wins. The order GitHub returns is
+     * not the order we need, and reading only the first entry is how a console
+     * sat on build 93 announcing it was up to date. */
     char tag[64];
-    if (!pong_gh_first_tag((const char *)body, tag, sizeof tag)) {
-        /* An empty repository is a normal state, not a fault -- say so, and say
-         * what to do, rather than reporting it like a network error. */
+    uint32_t best = pong_gh_best_build_tag((const char *)body, tag, sizeof tag);
+
+    if (best == 0) {
         snprintf(out->message, sizeof out->message,
-                 "%s/%s has no releases yet - press SOURCE to pick another",
+                 "%s/%s has no build tags - press SOURCE to pick another",
                  owner, repo);
         return PONG_UPDATE_ERROR;
     }
 
-    out->remote_build = pong_gh_build_from_tag(tag);
+    out->remote_build = best;
     out->remote_protocol = 0;   /* GitHub does not know the protocol version */
 
     snprintf(out->release_url, sizeof out->release_url,
@@ -237,6 +267,27 @@ PongUpdateResult pong_update_download(const PongNetConfig *net,
     char tmp[128];
     snprintf(tmp, sizeof tmp, "%s.part", dest_path);
 
+    /*
+     * Create the containing directory first.
+     *
+     * fopen does not create missing directories, so a destination like
+     * sdmc:/cias/pong3ds.cia fails on any SD card that has never held a CIA --
+     * and the only symptom would be "cannot write to SD card", which points at
+     * a full or broken card rather than a missing folder. EEXIST is the normal
+     * case and is not an error.
+     */
+    {
+        char dir[128];
+        snprintf(dir, sizeof dir, "%s", dest_path);
+        char *slash = strrchr(dir, '/');
+        if (slash && slash != dir) {
+            *slash = '\0';
+            if (mkdir(dir, 0777) != 0 && errno != EEXIST) {
+                pong_log("update: mkdir %s failed (errno %d)", dir, errno);
+            }
+        }
+    }
+
     FILE *f = fopen(tmp, "wb");
     if (!f) {
         free(buf);
@@ -245,18 +296,58 @@ PongUpdateResult pong_update_download(const PongNetConfig *net,
     }
     size_t written = fwrite(buf, 1, resp.body_len, f);
     fclose(f);
-    free(buf);
 
     if (written != resp.body_len) {
+        free(buf);
         remove(tmp);
         snprintf(message, message_cap, "SD write incomplete (card full?)");
         return PONG_UPDATE_ERROR;
     }
 
-    remove(dest_path);
-    if (rename(tmp, dest_path) != 0) {
-        remove(tmp);
-        snprintf(message, message_cap, "could not replace %s", dest_path);
+    /*
+     * Move the staged file into place.
+     *
+     * The previous version did remove(dest) and then rename(), and deleted the
+     * staging file if the rename failed. Reported from a console: "could not
+     * replace sdmc:/3ds/pong3ds.3dsx" -- and by then it had deleted the
+     * destination, tried and failed to rename, and deleted the download too.
+     * The failure path destroyed BOTH copies of the program. A routine that
+     * exists to make updating safe must never be able to leave you with less
+     * than you started with.
+     *
+     * The cause is that the Homebrew Launcher keeps the running .3dsx open, so
+     * on this platform remove() and rename() against it can both fail -- the
+     * comment at the top of this file claiming the file was merely "loaded into
+     * memory" and therefore free to replace was an assumption, not a fact.
+     *
+     * So: try the atomic move, and if the directory entry cannot be touched,
+     * rewrite the contents in place instead, from the buffer still in hand.
+     * The staging file is kept until one of them has actually worked.
+     */
+    bool placed = (rename(tmp, dest_path) == 0);
+    int rename_err = placed ? 0 : errno;
+
+    if (!placed) {
+        FILE *d = fopen(dest_path, "wb");
+        if (d) {
+            size_t w2 = fwrite(buf, 1, resp.body_len, d);
+            if (fclose(d) == 0 && w2 == resp.body_len) {
+                placed = true;
+                remove(tmp);
+            }
+        }
+        pong_log("update: rename failed (errno %d); in-place rewrite %s",
+                 rename_err, placed ? "succeeded" : "FAILED");
+    }
+
+    free(buf);
+
+    if (!placed) {
+        /* Both copies still exist. Say where the new one is, so this is a
+         * rename away from being fixed rather than a dead end. */
+        snprintf(message, message_cap,
+                 "downloaded ok but could not replace it - new build is at %s",
+                 tmp);
         return PONG_UPDATE_ERROR;
     }
 
@@ -264,8 +355,10 @@ PongUpdateResult pong_update_download(const PongNetConfig *net,
         /* Deliberately does NOT say "updated": nothing about the running title
          * changed, and saying otherwise is what made a successful download look
          * like a failed one. */
+        /* Names the actual path: "saved to SD" was fine when it went to the
+         * root and is not once there is a folder to find. */
         snprintf(message, message_cap,
-                 "build %lu saved to SD as pong3ds.cia - install it with FBI",
+                 "build %lu saved to SD:/cias/pong3ds.cia - install it with FBI",
                  (unsigned long)info->remote_build);
     } else {
         snprintf(message, message_cap,

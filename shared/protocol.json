@@ -1,45 +1,57 @@
 {
   "protocolVersion": 1,
   "doc": "Single source of truth for the Pong3DS wire protocol. Generates TypeScript and C codecs. DO NOT hand-edit generated files.",
-
   "header": {
     "bytes": 8,
     "magic0": 80,
     "magic1": 71,
     "fields": [
-      { "name": "magic0", "type": "u8" },
-      { "name": "magic1", "type": "u8" },
-      { "name": "version", "type": "u8" },
-      { "name": "type", "type": "u8" },
-      { "name": "length", "type": "u16" },
-      { "name": "seq", "type": "u16" }
+      {
+        "name": "magic0",
+        "type": "u8"
+      },
+      {
+        "name": "magic1",
+        "type": "u8"
+      },
+      {
+        "name": "version",
+        "type": "u8"
+      },
+      {
+        "name": "type",
+        "type": "u8"
+      },
+      {
+        "name": "length",
+        "type": "u16"
+      },
+      {
+        "name": "seq",
+        "type": "u16"
+      }
     ]
   },
-
   "constants": {
     "Q4_SHIFT": 4,
     "FIELD_W": 800,
     "FIELD_H": 480,
     "TICK_HZ": 60,
     "SNAPSHOT_HZ": 30,
-
     "PADDLE_W": 12,
     "PADDLE_H": 80,
     "PADDLE_X_L": 24,
     "PADDLE_X_R": 776,
     "BALL_R": 8,
-
     "MAX_PADDLE_SPEED_Q4": 192,
     "BALL_SPEED_START_Q4": 80,
     "BALL_SPEED_STEP_Q4": 6,
     "BALL_SPEED_MAX_Q4": 176,
     "BALL_SPEED_MAX_SLOW_Q4": 144,
     "BALL_MAX_ANGLE_STEPS": 38,
-
     "WIN_SCORE": 7,
     "COUNTDOWN_TICKS": 180,
     "GOAL_FREEZE_TICKS": 90,
-
     "SNAP_RING": 60,
     "SNAP_BATCH_MAX": 8,
     "NAME_BYTES": 16,
@@ -49,108 +61,374 @@
     "GRACE_MS": 30000,
     "LONGPOLL_HOLD_MS": 20000
   },
-
   "enums": {
-    "Platform":      { "UNKNOWN": 0, "WEB": 1, "N3DS": 2, "WII": 3 },
-    "TransportKind": { "TCP": 0, "WS": 1, "SSE": 2, "LONGPOLL": 3, "RR": 4 },
-    "JoinMode":      { "QUICKMATCH": 0, "ROOM_CODE": 1, "VS_BOT": 2 },
-    "MatchState":    { "LOBBY": 0, "COUNTDOWN": 1, "PLAY": 2, "GOAL_FREEZE": 3, "GAME_OVER": 4, "OPP_LOST": 5 },
-    "EventKind":     { "GOAL": 1, "MATCH_OVER": 2, "OPP_LEFT": 3, "OPP_REJOINED": 4, "COUNTDOWN_START": 5, "PADDLE_HIT": 6, "WALL_HIT": 7 },
-    "ByeCode":       { "NORMAL": 1, "TIMEOUT": 2, "PROTO_ERR": 3, "VERSION_MISMATCH": 4, "ROOM_FULL": 5, "SESSION_UNKNOWN": 6 },
-    "SnapFlag":      { "KEYFRAME": 1, "OPP_CONNECTED": 2, "SLOW_MODE": 4 },
-    "MatchFlag":     { "SLOW_MODE": 1 },
-    "ButtonBit":     { "CONTINUE": 1, "PAUSE": 2, "REMATCH": 4 }
+    "Platform": {
+      "UNKNOWN": 0,
+      "WEB": 1,
+      "N3DS": 2,
+      "WII": 3,
+      "PC": 4,
+      "VITA": 5
+    },
+    "TransportKind": {
+      "TCP": 0,
+      "WS": 1,
+      "SSE": 2,
+      "LONGPOLL": 3,
+      "RR": 4
+    },
+    "JoinMode": {
+      "QUICKMATCH": 0,
+      "ROOM_CODE": 1,
+      "VS_BOT": 2
+    },
+    "MatchState": {
+      "LOBBY": 0,
+      "COUNTDOWN": 1,
+      "PLAY": 2,
+      "GOAL_FREEZE": 3,
+      "GAME_OVER": 4,
+      "OPP_LOST": 5
+    },
+    "EventKind": {
+      "GOAL": 1,
+      "MATCH_OVER": 2,
+      "OPP_LEFT": 3,
+      "OPP_REJOINED": 4,
+      "COUNTDOWN_START": 5,
+      "PADDLE_HIT": 6,
+      "WALL_HIT": 7
+    },
+    "ByeCode": {
+      "NORMAL": 1,
+      "TIMEOUT": 2,
+      "PROTO_ERR": 3,
+      "VERSION_MISMATCH": 4,
+      "ROOM_FULL": 5,
+      "SESSION_UNKNOWN": 6
+    },
+    "SnapFlag": {
+      "KEYFRAME": 1,
+      "OPP_CONNECTED": 2,
+      "SLOW_MODE": 4
+    },
+    "MatchFlag": {
+      "SLOW_MODE": 1
+    },
+    "ButtonBit": {
+      "CONTINUE": 1,
+      "PAUSE": 2,
+      "REMATCH": 4
+    }
   },
-
   "messages": [
-    { "name": "HELLO", "id": 1, "dir": "c2s", "fields": [
-      { "name": "platform",  "type": "u8" },
-      { "name": "transport", "type": "u8" },
-      { "name": "caps",      "type": "u16" },
-      { "name": "name",      "type": "bytes", "len": 16 },
-      { "name": "buildId",   "type": "u32" }
-    ]},
-
-    { "name": "WELCOME", "id": 2, "dir": "s2c", "fields": [
-      { "name": "sessionId",    "type": "bytes", "len": 16 },
-      { "name": "serverTimeMs", "type": "u32" },
-      { "name": "tickRate",     "type": "u16" },
-      { "name": "snapshotRate", "type": "u16" },
-      { "name": "fieldW",       "type": "u16" },
-      { "name": "fieldH",       "type": "u16" }
-    ]},
-
-    { "name": "JOIN", "id": 3, "dir": "c2s", "fields": [
-      { "name": "mode",     "type": "u8" },
-      { "name": "flags",    "type": "u8" },
-      { "name": "roomCode", "type": "bytes", "len": 6 }
-    ]},
-
-    { "name": "MATCH_START", "id": 4, "dir": "s2c", "fields": [
-      { "name": "matchId",       "type": "u32" },
-      { "name": "yourSide",      "type": "u8" },
-      { "name": "oppPlatform",   "type": "u8" },
-      { "name": "paddleHQ4",     "type": "u16" },
-      { "name": "paddleWQ4",     "type": "u16" },
-      { "name": "ballRQ4",       "type": "u16" },
-      { "name": "maxPaddleSpdQ4","type": "u16" },
-      { "name": "winScore",      "type": "u8" },
-      { "name": "matchFlags",    "type": "u8" },
-      { "name": "oppName",       "type": "bytes", "len": 16 }
-    ]},
-
-    { "name": "INPUT", "id": 5, "dir": "c2s", "fields": [
-      { "name": "inputSeq",     "type": "u32" },
-      { "name": "lastTickSeen", "type": "u32" },
-      { "name": "desiredYQ4",   "type": "i16" },
-      { "name": "buttons",      "type": "u8" },
-      { "name": "flags",        "type": "u8" }
-    ]},
-
-    { "name": "SNAPSHOT", "id": 6, "dir": "s2c", "fields": [
-      { "name": "tick",        "type": "u32" },
-      { "name": "ackInputSeq", "type": "u32" },
-      { "name": "ballXQ4",     "type": "i16" },
-      { "name": "ballYQ4",     "type": "i16" },
-      { "name": "ballVXQ4",    "type": "i16" },
-      { "name": "ballVYQ4",    "type": "i16" },
-      { "name": "leftYQ4",     "type": "i16" },
-      { "name": "rightYQ4",    "type": "i16" },
-      { "name": "scoreL",      "type": "u8" },
-      { "name": "scoreR",      "type": "u8" },
-      { "name": "state",       "type": "u8" },
-      { "name": "flags",       "type": "u8" }
-    ]},
-
-    { "name": "EVENT", "id": 7, "dir": "s2c", "fields": [
-      { "name": "tick", "type": "u32" },
-      { "name": "kind", "type": "u8" },
-      { "name": "a",    "type": "u8" },
-      { "name": "b",    "type": "u8" },
-      { "name": "c",    "type": "u8" }
-    ]},
-
-    { "name": "PING", "id": 8, "dir": "c2s", "fields": [
-      { "name": "clientTimeMs",     "type": "u32" },
-      { "name": "echoServerTimeMs", "type": "u32" }
-    ]},
-
-    { "name": "PONG", "id": 9, "dir": "s2c", "fields": [
-      { "name": "clientTimeMs", "type": "u32" },
-      { "name": "serverTimeMs", "type": "u32" },
-      { "name": "serverTick",   "type": "u32" }
-    ]},
-
-    { "name": "BYE", "id": 10, "dir": "s2c", "fields": [
-      { "name": "code",     "type": "u16" },
-      { "name": "reserved", "type": "u16" }
-    ]},
-
-    { "name": "LEAVE", "id": 11, "dir": "c2s", "fields": [] },
-
-    { "name": "RESUME", "id": 13, "dir": "c2s", "fields": [
-      { "name": "sessionId",    "type": "bytes", "len": 16 },
-      { "name": "lastTickSeen", "type": "u32" }
-    ]}
+    {
+      "name": "HELLO",
+      "id": 1,
+      "dir": "c2s",
+      "fields": [
+        {
+          "name": "platform",
+          "type": "u8"
+        },
+        {
+          "name": "transport",
+          "type": "u8"
+        },
+        {
+          "name": "caps",
+          "type": "u16"
+        },
+        {
+          "name": "name",
+          "type": "bytes",
+          "len": 16
+        },
+        {
+          "name": "buildId",
+          "type": "u32"
+        }
+      ]
+    },
+    {
+      "name": "WELCOME",
+      "id": 2,
+      "dir": "s2c",
+      "fields": [
+        {
+          "name": "sessionId",
+          "type": "bytes",
+          "len": 16
+        },
+        {
+          "name": "serverTimeMs",
+          "type": "u32"
+        },
+        {
+          "name": "tickRate",
+          "type": "u16"
+        },
+        {
+          "name": "snapshotRate",
+          "type": "u16"
+        },
+        {
+          "name": "fieldW",
+          "type": "u16"
+        },
+        {
+          "name": "fieldH",
+          "type": "u16"
+        }
+      ]
+    },
+    {
+      "name": "JOIN",
+      "id": 3,
+      "dir": "c2s",
+      "fields": [
+        {
+          "name": "mode",
+          "type": "u8"
+        },
+        {
+          "name": "flags",
+          "type": "u8"
+        },
+        {
+          "name": "roomCode",
+          "type": "bytes",
+          "len": 6
+        }
+      ]
+    },
+    {
+      "name": "MATCH_START",
+      "id": 4,
+      "dir": "s2c",
+      "fields": [
+        {
+          "name": "matchId",
+          "type": "u32"
+        },
+        {
+          "name": "yourSide",
+          "type": "u8"
+        },
+        {
+          "name": "oppPlatform",
+          "type": "u8"
+        },
+        {
+          "name": "paddleHQ4",
+          "type": "u16"
+        },
+        {
+          "name": "paddleWQ4",
+          "type": "u16"
+        },
+        {
+          "name": "ballRQ4",
+          "type": "u16"
+        },
+        {
+          "name": "maxPaddleSpdQ4",
+          "type": "u16"
+        },
+        {
+          "name": "winScore",
+          "type": "u8"
+        },
+        {
+          "name": "matchFlags",
+          "type": "u8"
+        },
+        {
+          "name": "oppName",
+          "type": "bytes",
+          "len": 16
+        }
+      ]
+    },
+    {
+      "name": "INPUT",
+      "id": 5,
+      "dir": "c2s",
+      "fields": [
+        {
+          "name": "inputSeq",
+          "type": "u32"
+        },
+        {
+          "name": "lastTickSeen",
+          "type": "u32"
+        },
+        {
+          "name": "desiredYQ4",
+          "type": "i16"
+        },
+        {
+          "name": "buttons",
+          "type": "u8"
+        },
+        {
+          "name": "flags",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "SNAPSHOT",
+      "id": 6,
+      "dir": "s2c",
+      "fields": [
+        {
+          "name": "tick",
+          "type": "u32"
+        },
+        {
+          "name": "ackInputSeq",
+          "type": "u32"
+        },
+        {
+          "name": "ballXQ4",
+          "type": "i16"
+        },
+        {
+          "name": "ballYQ4",
+          "type": "i16"
+        },
+        {
+          "name": "ballVXQ4",
+          "type": "i16"
+        },
+        {
+          "name": "ballVYQ4",
+          "type": "i16"
+        },
+        {
+          "name": "leftYQ4",
+          "type": "i16"
+        },
+        {
+          "name": "rightYQ4",
+          "type": "i16"
+        },
+        {
+          "name": "scoreL",
+          "type": "u8"
+        },
+        {
+          "name": "scoreR",
+          "type": "u8"
+        },
+        {
+          "name": "state",
+          "type": "u8"
+        },
+        {
+          "name": "flags",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "EVENT",
+      "id": 7,
+      "dir": "s2c",
+      "fields": [
+        {
+          "name": "tick",
+          "type": "u32"
+        },
+        {
+          "name": "kind",
+          "type": "u8"
+        },
+        {
+          "name": "a",
+          "type": "u8"
+        },
+        {
+          "name": "b",
+          "type": "u8"
+        },
+        {
+          "name": "c",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "PING",
+      "id": 8,
+      "dir": "c2s",
+      "fields": [
+        {
+          "name": "clientTimeMs",
+          "type": "u32"
+        },
+        {
+          "name": "echoServerTimeMs",
+          "type": "u32"
+        }
+      ]
+    },
+    {
+      "name": "PONG",
+      "id": 9,
+      "dir": "s2c",
+      "fields": [
+        {
+          "name": "clientTimeMs",
+          "type": "u32"
+        },
+        {
+          "name": "serverTimeMs",
+          "type": "u32"
+        },
+        {
+          "name": "serverTick",
+          "type": "u32"
+        }
+      ]
+    },
+    {
+      "name": "BYE",
+      "id": 10,
+      "dir": "s2c",
+      "fields": [
+        {
+          "name": "code",
+          "type": "u16"
+        },
+        {
+          "name": "reserved",
+          "type": "u16"
+        }
+      ]
+    },
+    {
+      "name": "LEAVE",
+      "id": 11,
+      "dir": "c2s",
+      "fields": []
+    },
+    {
+      "name": "RESUME",
+      "id": 13,
+      "dir": "c2s",
+      "fields": [
+        {
+          "name": "sessionId",
+          "type": "bytes",
+          "len": 16
+        },
+        {
+          "name": "lastTickSeen",
+          "type": "u32"
+        }
+      ]
+    }
   ]
 }

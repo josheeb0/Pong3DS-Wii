@@ -69,6 +69,15 @@ void pong_client_on_snapshot(PongClient *c, const PongSNAPSHOT *s, uint32_t now_
     }
     c->last_arrival_ms = now_ms;
 
+    /* Snapshots per second, over a one-second window. */
+    if (c->snap_window_ms == 0) c->snap_window_ms = now_ms;
+    c->snap_count++;
+    if (now_ms - c->snap_window_ms >= 1000) {
+        c->snap_hz = c->snap_count;
+        c->snap_count = 0;
+        c->snap_window_ms = now_ms;
+    }
+
     PongSnap *e = &c->ring[c->head];
     e->tick = s->tick;
     e->ball_x = s->ball_xq4;
@@ -165,10 +174,22 @@ uint32_t pong_client_render_delay_ms(const PongClient *c)
 {
     if (c->gap_count < 4) return 100;
 
-    /* Median of the observed arrival gaps. Derived from what we actually get
-     * rather than the transport's nominal rate: a polling client receives
-     * batched 30Hz snapshots but receives them in ~100ms bursts, so the buffer
-     * must absorb the burst spacing, not the sample spacing. */
+    /*
+     * A high percentile of the observed arrival gaps -- NOT the median, which
+     * is what this used to take and which is wrong for exactly the transport it
+     * was written for.
+     *
+     * A polling client receives batched snapshots: three 30Hz samples land
+     * together, then nothing for 100ms. The gaps between arrivals are therefore
+     * 0, 0, 100, 0, 0, 100..., whose median is 0. The buffer came out at its 50ms
+     * floor against a 100ms cycle, so the client starved for most of every poll
+     * -- predicting the ball, then correcting when the burst landed, sixty times
+     * a second. That is what "jagged online" was.
+     *
+     * The 90th percentile picks out the burst spacing instead, which is the
+     * thing the buffer actually has to cover. A steady transport has no tail, so
+     * its percentile is its sample spacing and the delay stays small.
+     */
     uint32_t tmp[32];
     memcpy(tmp, c->gaps, sizeof(uint32_t) * (size_t)c->gap_count);
     for (int i = 1; i < c->gap_count; i++) {
@@ -177,8 +198,14 @@ uint32_t pong_client_render_delay_ms(const PongClient *c)
         while (j >= 0 && tmp[j] > k) { tmp[j + 1] = tmp[j]; j--; }
         tmp[j + 1] = k;
     }
-    uint32_t median = tmp[c->gap_count / 2];
-    uint32_t delay = median * 2 + 20;
+    int idx = (c->gap_count * 9) / 10;
+    if (idx >= c->gap_count) idx = c->gap_count - 1;
+    uint32_t p90 = tmp[idx];
+
+    /* One and a half cycles plus a fixed margin: enough that an ordinary late
+     * burst is absorbed rather than seen, without burying the player in latency
+     * to hide a gap that rarely happens. */
+    uint32_t delay = p90 + p90 / 2 + 20;
     if (delay < 50) delay = 50;
     if (delay > 250) delay = 250;
     return delay;
@@ -195,6 +222,90 @@ static const PongSnap *ring_at(const PongClient *c, int i)
 static int32_t lerp32(int32_t a, int32_t b, int32_t t_q8)
 {
     return a + (int32_t)(((int64_t)(b - a) * t_q8) >> 8);
+}
+
+/*
+ * How far past the newest snapshot we are willing to predict, in Q8 ticks.
+ *
+ * 9 ticks is 150ms. Beyond that a prediction is more likely to be wrong than
+ * useful -- the ball may have hit a paddle we have not heard about -- and the
+ * correction when the truth arrives is worse than the stutter it was hiding.
+ */
+#define EXTRAPOLATE_MAX_Q8 (9 * 256)
+
+/*
+ * Folds a predicted Y back inside the walls, matching the server's reflection.
+ *
+ * A loop rather than a single fold: a long prediction at a steep angle can
+ * cross both walls, and folding once would leave the ball outside the field,
+ * which is far more visible than the stutter this exists to remove.
+ */
+static int32_t reflect_y(int32_t y)
+{
+    const int32_t lo = PONG_BALL_R << PONG_Q4_SHIFT;
+    const int32_t hi = PONG_FIELD_H_Q4 - lo;
+    if (hi <= lo) return y;
+    for (int guard = 0; guard < 8; guard++) {
+        if (y < lo)      y = lo + (lo - y);
+        else if (y > hi) y = hi - (y - hi);
+        else break;
+    }
+    return clamp32(y, lo, hi);
+}
+
+/*
+ * How fast a correction is worked off, and when it is refused.
+ *
+ * A seventh per frame retires an error in about 200ms at 60fps: quick enough
+ * that the drawn ball is never meaningfully behind the truth, slow enough that
+ * a single packet cannot move it in one frame.
+ *
+ * Past the snap threshold the error is not smoothed at all. Half a screen of
+ * disagreement is a serve, a goal, or a paddle bounce we never predicted --
+ * gliding across that draws a ball travelling through space it was never in,
+ * which is a worse lie than the jump.
+ */
+#define RECONCILE_SHIFT   3                    /* err -= err >> 3 each frame */
+#define RECONCILE_SNAP_Q4 (120 << PONG_Q4_SHIFT)
+
+/*
+ * Absorbs the difference between where we drew the ball and where the server
+ * says it was, then works it off over the following frames.
+ *
+ * Only when the basis actually changes. Re-absorbing every frame would turn
+ * this into a low-pass filter on position and leave the ball permanently
+ * trailing the truth by a fixed distance -- smooth, and wrong.
+ */
+static void reconcile_ball(PongClient *c, PongView *out, uint32_t newest_tick)
+{
+    if (out->state != PONG_MATCH_STATE_PLAY) {
+        c->ball_off_x = c->ball_off_y = 0;
+        c->vis_valid = false;
+        c->vis_basis_tick = newest_tick;
+        return;
+    }
+
+    if (c->vis_valid && newest_tick != c->vis_basis_tick) {
+        int32_t ex = c->vis_x - out->ball_x;
+        int32_t ey = c->vis_y - out->ball_y;
+        if (ex > RECONCILE_SNAP_Q4 || ex < -RECONCILE_SNAP_Q4 ||
+            ey > RECONCILE_SNAP_Q4 || ey < -RECONCILE_SNAP_Q4) {
+            ex = ey = 0;
+        }
+        c->ball_off_x = ex;
+        c->ball_off_y = ey;
+    }
+    c->vis_basis_tick = newest_tick;
+
+    c->ball_off_x -= c->ball_off_x >> RECONCILE_SHIFT;
+    c->ball_off_y -= c->ball_off_y >> RECONCILE_SHIFT;
+
+    out->ball_x += c->ball_off_x;
+    out->ball_y += c->ball_off_y;
+
+    c->vis_x = out->ball_x;
+    c->vis_y = out->ball_y;
+    c->vis_valid = true;
 }
 
 void pong_client_update(PongClient *c, uint32_t now_ms, PongView *out)
@@ -228,7 +339,33 @@ void pong_client_update(PongClient *c, uint32_t now_ms, PongView *out)
     else c->my_y += err / 4;
 
     /* --- everything else: sampled in the past ----------------------------- */
-    c->render_delay_ms = pong_client_render_delay_ms(c);
+    /*
+     * Ease toward the target buffer size rather than adopting it.
+     *
+     * The render cursor is (server tick - render delay). The clock term is
+     * eased for exactly this reason -- see pong_client_on_pong, which says a
+     * jump "would make the render cursor leap, which reads as a stutter even
+     * when the new estimate is better". The delay term moves the cursor just as
+     * directly and was being recomputed from a sliding window and assigned
+     * outright, every frame. When the window turned over, the cursor leapt: a
+     * measured 101ms in one frame, six ticks of ball travel, which is the ball
+     * jumping rather than moving.
+     *
+     * 2ms per frame crosses the whole legal range in about a second and a half,
+     * which is far quicker than a transport's behaviour actually changes, while
+     * never being visible in a single frame.
+     */
+    {
+        uint32_t target = pong_client_render_delay_ms(c);
+        const uint32_t step = 2;
+        if (target > c->render_delay_ms) {
+            uint32_t d = target - c->render_delay_ms;
+            c->render_delay_ms += (d < step) ? d : step;
+        } else if (target < c->render_delay_ms) {
+            uint32_t d = c->render_delay_ms - target;
+            c->render_delay_ms -= (d < step) ? d : step;
+        }
+    }
     c->arrival_gap_ms = (c->gap_count > 0) ? c->gaps[(c->gap_head + 31) % 32] : 0;
 
     if (c->count == 0) {
@@ -247,9 +384,25 @@ void pong_client_update(PongClient *c, uint32_t now_ms, PongView *out)
 
     out->starved = cursor_q8 > newest_q8 + 128;
 
-    /* Clamping the cursor to what we hold is what keeps this stable when the
-     * clock estimate is briefly wrong: it degrades to "slightly stale" rather
-     * than to an empty view or a stutter. */
+    /*
+     * Running past the newest snapshot used to clamp the cursor, which froze
+     * the ball until the next packet and then jumped it to wherever it had got
+     * to. On a bursty transport that is most of the visible motion, and it is
+     * what "jagged" actually looks like: hold, jump, hold, jump.
+     *
+     * The ball is the one thing we can honestly predict. Between contacts it is
+     * linear motion plus wall reflection and nothing else, and every snapshot
+     * carries its velocity, so extrapolating forward reproduces exactly what
+     * the server is doing rather than inventing plausible motion.
+     *
+     * Paddles are deliberately NOT extrapolated. A paddle's velocity says
+     * nothing about whether the player is about to stop, so predicting it
+     * overshoots and then snaps back -- worse than being slightly stale, which
+     * nobody can see.
+     */
+    int32_t ahead_q8 = cursor_q8 - newest_q8;
+    if (ahead_q8 > EXTRAPOLATE_MAX_Q8) ahead_q8 = EXTRAPOLATE_MAX_Q8;
+
     if (cursor_q8 < oldest_q8) cursor_q8 = oldest_q8;
     if (cursor_q8 > newest_q8) cursor_q8 = newest_q8;
 
@@ -279,6 +432,17 @@ void pong_client_update(PongClient *c, uint32_t now_ms, PongView *out)
         out->ball_x = lerp32(a->ball_x, b->ball_x, t_q8);
         out->ball_y = lerp32(a->ball_y, b->ball_y, t_q8);
     }
+
+    /* Past the end of what we hold, carry the ball forward ourselves. Only
+     * while actually playing: during a serve or a goal the stored velocity
+     * describes a ball that is not moving yet. */
+    if (ahead_q8 > 0 && newest->state == PONG_MATCH_STATE_PLAY &&
+        !(newest->flags & PONG_SNAP_FLAG_KEYFRAME)) {
+        out->ball_x = newest->ball_x + (((int32_t)newest->ball_vx * ahead_q8) >> 8);
+        out->ball_y = newest->ball_y + (((int32_t)newest->ball_vy * ahead_q8) >> 8);
+        out->ball_y = reflect_y(out->ball_y);
+        out->extrapolated = true;
+    }
     out->left_y = lerp32(a->left_y, b->left_y, t_q8);
     out->right_y = lerp32(a->right_y, b->right_y, t_q8);
     out->score_l = b->score_l;
@@ -292,4 +456,6 @@ void pong_client_update(PongClient *c, uint32_t now_ms, PongView *out)
      * which is the lag a player notices first. */
     if (c->my_side == 0) out->left_y = c->my_y;
     else out->right_y = c->my_y;
+
+    reconcile_ball(c, out, newest->tick);
 }

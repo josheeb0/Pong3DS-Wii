@@ -1,22 +1,93 @@
-# Pong3DS
+# Pong
 
-Cross-play Pong between a **web browser** and a **Nintendo 3DS**, refereed by one
-authoritative server.
+Cross-play Pong across **six clients** — a Nintendo 3DS, a PS Vita, Windows,
+macOS, Linux and a web browser — refereed by one authoritative server.
 
-The 3DS plays over raw TCP on the LAN at full 60Hz, or over HTTPS from anywhere
-using its own bundled TLS stack. The browser negotiates WebSocket → SSE →
-HTTP long-poll, so it works even where WebSockets don't survive the proxy.
+Every pairing has been played on real hardware.
+
+|            | 3DS | Vita | Windows | macOS | Linux | Browser |
+|------------|:---:|:----:|:-------:|:-----:|:-----:|:-------:|
+| **3DS**    |  —  |  ✅  |   ✅    |  ✅   |  ✅   |   ✅    |
+| **Vita**   | ✅  |  —   |   ✅    |  ✅   |  ✅   |   ✅    |
+| **Windows**| ✅  |  ✅  |    —    |  ✅   |  ✅   |   ✅    |
+| **macOS**  | ✅  |  ✅  |   ✅    |   —   |  ✅   |   ✅    |
+| **Linux**  | ✅  |  ✅  |   ✅    |  ✅   |   —   |   ✅    |
+| **Browser**| ✅  |  ✅  |   ✅    |  ✅   |  ✅   |    —    |
 
 ```
-   browser (React + MUI)                    Nintendo 3DS (C + citro2d)
-   WebSocket / SSE / long-poll              raw TCP  /  HTTPS + mbedTLS
-            \                                        /
-             \______  identical binary frames  ______/
+  browser        3DS              Vita           Windows / macOS / Linux
+  React+MUI      C + citro2d      C + vita2d     C + SDL3
+  WS/SSE/poll    TCP / HTTPS      TCP (SceNet)   TCP
+       \             |                |                    /
+        \____________ identical binary frames _____________/
                               |
                     Session (transport-agnostic)
                               |
-                    Room → 60Hz integer simulation
+                    Room -> 60Hz integer simulation
 ```
+
+## What each client is
+
+| | Interface | Transport | Text entry |
+|---|---|---|---|
+| **3DS** | two screens, 400x240 + 320x240 touch | raw TCP on a LAN, or HTTPS anywhere via its own mbedTLS | swkbd |
+| **PS Vita** | one 960x544 screen, touch | raw TCP over SceNet | system IME |
+| **Windows** | resizable window | raw TCP (Winsock) | SDL text input |
+| **macOS** | resizable window | raw TCP | SDL text input |
+| **Linux** | resizable window | raw TCP | SDL text input |
+| **Browser** | responsive page | WebSocket -> SSE -> long-poll | the browser's |
+
+Every client offers quick match, room codes, a CPU opponent, an editable server
+address and a player name shown beside the score. The 3DS additionally updates
+itself from GitHub Releases.
+
+**The desktop and Vita builds speak raw TCP only**, so they play against a server
+on your network. For play over the internet, the browser client and the 3DS both
+do it properly — the 3DS carries its own TLS stack for exactly that reason.
+
+## What it looks like
+
+The same `src/ui/render.c` draws all three. Each platform supplies a renderer
+backend behind `src/gfx/gfx.h` and nothing else changes.
+
+### PC — SDL3, its own interface
+
+The desktop build is **not the handheld one in a window**. One canvas, a
+full-size playfield, a scoreboard above it and a proper menu -- the same
+reasoning that gives the browser client its own interface. A window is not a
+3DS, and making either pretend to be the other makes both worse.
+
+![PC menu](docs/previews/pc_menu.png)
+
+![PC in a match](docs/previews/pc_play.png)
+
+Keyboard, mouse, or a gamepad -- SDL3 knows the DualSense natively, so a PS5
+controller is plug-and-play and the on-screen hints switch to its button names
+when one is attached. Both shots above were captured from the running build;
+the second is a demo state, and the connected screen below is against a real
+server.
+
+### PS Vita — 960x544
+
+![Vita](docs/previews/vita.png)
+
+### Nintendo 3DS — 400x240 over 320x240  *(handheld interface)*
+
+| in a match | the menu |
+|---|---|
+| ![3DS](docs/previews/3ds.png) | ![3DS menu](docs/previews/3ds_menu.png) |
+
+**How these were made, and what they are not.** The PC shots are real captures
+from the SDL3 build. The Vita and 3DS images are the *same build* rendering at
+those layouts — honest about arrangement, scale and every pixel of the
+interface, because the layout rule is shared between backends and the Vita
+backend uses the same embedded font.
+
+The one thing they do not show is the console's **typeface**: the 3DS backend
+draws through citro2d with the system font, which is proportional, where the PC
+and Vita backends use an embedded 8x8 bitmap face. So the 3DS images are a
+faithful preview of layout and a stand-in for text. Photographs of real hardware
+would be better and are welcome.
 
 ## Quick start
 
@@ -26,6 +97,72 @@ make dev
 
 Server on `:8788` (HTTP + WebSocket) and `:8787` (raw TCP for the 3DS), web client
 on `:5173`. Open two tabs and play. `make test` runs everything.
+
+## Building for each platform
+
+```bash
+make dev          # server + web client, for development
+make 3ds          # 3ds/pong3ds.3dsx and .cia   (devkitARM)
+make -C pc        # pc/pong-pc                  (SDL3)
+make -C vita      # vita/pong-vita.vpk          (VitaSDK)
+make test         # everything below
+```
+
+CI builds all five native targets on every push and attaches them to a release
+on a version tag. Nothing needs the others installed: the 3DS build does not
+need SDL3, the desktop build does not need devkitPro.
+
+`make -C pc run` opens a window.
+
+| flag | |
+|---|---|
+| `--size WxH` | window size |
+| `--autoplay` | join a quick match straight away |
+| `--demo` | fill in a match state without a server, for screenshots |
+| `--frames N --shot f.bmp` | render N frames, save one, exit |
+
+The PC build reads `pong-pc.cfg` beside the binary (`server`, `port`, `name`),
+and SERVER and NAME are editable in the menu. **It speaks raw TCP only**, so it
+plays against a server on the LAN and not through the Cloudflare tunnel -- to
+play over the internet from a desktop, open the web client, which already does
+that properly.
+
+**Status.** All five build in CI and all five have played against each other on
+real hardware -- 3DS, macOS, Windows, Linux, PS Vita, plus the browser client.
+Fifteen pairings, every one confirmed.
+
+The Vita build was written without a VitaSDK to hand and debugged through CI and
+crash dumps from the console. Four things were wrong and none of them were the
+rendering: a container shell without `pipefail`, a stub library the SDK image
+references but does not ship, an upstream `ceil()` with no `<math.h>`, and a
+missing `-Wl,-q` -- without which the module loads unrelocated and faults before
+`main()` runs. A forty-line test app is what finally separated the platform from
+the game, and it should have been the first thing written rather than the last.
+
+## The renderer seam
+
+`src/gfx/gfx.h` is the whole platform surface: rectangles, a gradient, a circle,
+text, and two logical screens. That is genuinely all Pong needs, and a small
+seam is one that three backends can agree on.
+
+| | |
+|---|---|
+| `src/gfx/3ds/` | citro2d. Nearly a direct mapping -- `PongColor` is the same packing as `C2D_Color32`, so colours are a cast |
+| `src/gfx/sdl3/` | SDL3. Gradients via `RenderGeometry`, the ball as a triangle fan |
+| `src/gfx/vita/` | vita2d. Gradients banded into strips, since it has no per-vertex colour |
+
+**Two surfaces, always.** The interface is laid out in the 3DS's 400x240 and
+320x240 and every backend presents both, deciding for itself where they go. The
+console maps them to its two panels; the Vita and a PC window measure side-by-side
+against stacked and pick whichever makes the playfield larger. The alternative --
+one canvas with per-platform layout -- would put a branch for every target into
+the UI code, which is the thing the seam exists to avoid.
+
+**Text is an embedded 8x8 bitmap font** on SDL3 and the Vita rather than
+SDL_ttf. It has to look the same in three places, and two font rasterisers do
+not agree about metrics: a panel sized on one would clip on another. The 3DS
+keeps its system font, which is why its text is proportional and the others'
+is not.
 
 ## Layout
 
@@ -38,6 +175,9 @@ on `:5173`. Open two tabs and play. `make test` runs everything.
 | `server/src/net/` | Sessions, dispatch, and the four transports |
 | `web/src/net/ladder.ts` | Transport negotiation |
 | `web/src/game/` | Interpolation, prediction, canvas renderer |
+| `src/gfx/` | The renderer seam and its three backends |
+| `src/ui/` | The interface, drawn through that seam by every platform |
+| `pc/`, `vita/` | Per-platform front ends: window, input, clock |
 | `3ds/source/` | The console client |
 | `3ds/vendor/` | mbedTLS and the CIA tooling, fetched by script |
 
@@ -145,6 +285,8 @@ make test
 
 | Test | Proves |
 |------|--------|
+| `server/test/matchmaker.test.ts` | Pairing is immediate, does not depend on timing, still prefers cross-play when there is a choice, and never pairs someone with a disconnected session |
+| `3ds/test/test_interp.c` | The ball keeps moving when snapshots stop, stops predicting past its cap, stays inside the field, and absorbs corrections rather than snapping |
 | `server/test/sim.test.ts` | Determinism over 1000 ticks, paddle clamping, no tunnelling, scoring, slow mode |
 | `3ds/test/test_proto.c` | The C codec matches the TypeScript encoder byte for byte, rejects malformed frames, and reports NEED_MORE at every truncation point |
 | `3ds/test/test_play.c` | **The actual 3DS netcode plays a real match** against a running server — compiled with host clang under ASan/UBSan, no console required |
@@ -191,6 +333,10 @@ See `deploy/DEPLOY.md`. Short version: pull the image, publish 8788 (HTTP) and
 
 ## Not built
 
-A Wii client. The protocol reserves `platform = 3` for it, and the codec and
-netcode are already platform-free C, so it needs a renderer and a socket layer
-rather than any protocol change.
+**A Wii client.** The protocol reserves `platform = 3` for it and always has.
+After the Vita, the shape of that job is known precisely: a renderer backend
+behind `src/gfx/gfx.h` and a socket layer. No protocol change, no simulation
+change, and the interface already exists in two forms to pick from.
+
+**In-app updates anywhere but the 3DS.** The console fetches its own `.3dsx`
+from GitHub Releases; every other platform is installed by hand.

@@ -215,9 +215,324 @@ jobs:
   #
   # Both halves were reproduced locally in Docker before being written here.
   # ---------------------------------------------------------------------------
+  # ---------------------------------------------------------------- mac -----
+  #
+  # The desktop build, on a real macOS runner because a Mac binary cannot be
+  # cross-compiled from Linux. Runs on Apple silicon (macos-14+ is arm64), so
+  # the artifact is named for what it actually is rather than "mac".
+  mac:
+    name: Build Mac (SDL3)
+    needs: verify
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SDL3
+        run: brew install sdl3
+
+      - name: Build
+        run: make -C pc BUILD_ID=${{ github.run_number }}
+
+      - name: Bundle SDL3 alongside the binary
+        run: |
+          set -euo pipefail
+          # A bare binary links against Homebrew's dylib at an absolute path
+          # that exists on this runner and on nobody else's machine. Copying the
+          # library in and rewriting the load path means the zip runs without
+          # the person downloading it having to install anything.
+          STAGE=pong-pc-macos-arm64
+          mkdir -p "$STAGE"
+          cp pc/pong-pc "$STAGE/"
+
+          SDL=$(otool -L pc/pong-pc | awk '/libSDL3/ {print $1; exit}')
+          echo "linked against: $SDL"
+          cp "$SDL" "$STAGE/"
+          SDL_BASE=$(basename "$SDL")
+
+          install_name_tool -change "$SDL" "@executable_path/$SDL_BASE" "$STAGE/pong-pc"
+          otool -L "$STAGE/pong-pc"
+
+          cat > "$STAGE/README.txt" <<'EOF'
+          Pong - desktop build (macOS, Apple silicon)
+
+            ./pong-pc
+
+          macOS will refuse an unsigned download the first time. Either
+          right-click the binary and choose Open, or run:
+
+            xattr -d com.apple.quarantine pong-pc libSDL3.0.dylib
+
+          Settings live in pong-pc.cfg beside the binary, and SERVER and NAME
+          are editable from the menu.
+
+          This build speaks raw TCP to a server on your network. It does not do
+          HTTPS -- to play over the internet, open the web client instead.
+
+          Controls: arrows or W/S, mouse, or a gamepad (a DualSense works as-is).
+          Enter selects, Esc goes back.
+          EOF
+
+          zip -r "$STAGE.zip" "$STAGE"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-build
+          path: pong-pc-macos-arm64.zip
+          if-no-files-found: error
+
+
+  # -------------------------------------------------------------- linux -----
+  #
+  # SDL3 is new enough that no LTS ships libsdl3-dev yet, so it is built from
+  # source and cached on its version. That is slow once and free afterwards,
+  # and it pins exactly what the binary links against rather than inheriting
+  # whatever a distro decides later.
+  linux:
+    name: Build Linux (SDL3)
+    needs: verify
+    runs-on: ubuntu-latest
+    env:
+      SDL_VERSION: "3.4.16"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config \
+            libasound2-dev libpulse-dev libx11-dev libxext-dev \
+            libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev \
+            libwayland-dev libxkbcommon-dev \
+            libxss-dev libxtst-dev libxxf86vm-dev libdrm-dev libgbm-dev \
+            libudev-dev libibus-1.0-dev patchelf
+
+      - name: Cache SDL3
+        id: sdl-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/sdl3-install
+          key: sdl3-${{ env.SDL_VERSION }}-${{ runner.os }}
+
+      - name: Build SDL3
+        if: steps.sdl-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch "release-${SDL_VERSION}" \
+            https://github.com/libsdl-org/SDL.git /tmp/SDL
+          # X11 extras are optional for a game window; turning the ones we do
+          # not use off is more robust than chasing every -dev package a full
+          # SDL build would like to have.
+          cmake -S /tmp/SDL -B /tmp/SDL/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSDL_X11_XSCRNSAVER=OFF \
+            -DSDL_X11_XDBE=OFF \
+            -DCMAKE_INSTALL_PREFIX="$HOME/sdl3-install"
+          cmake --build /tmp/SDL/build
+          cmake --install /tmp/SDL/build
+
+      - name: Build
+        run: |
+          export PKG_CONFIG_PATH="$HOME/sdl3-install/lib/pkgconfig:$HOME/sdl3-install/lib64/pkgconfig"
+          make -C pc BUILD_ID=${{ github.run_number }}
+
+      - name: Bundle SDL3 alongside the binary
+        run: |
+          set -euo pipefail
+          # Same reasoning as the Mac job: the binary links a library that lives
+          # in a path unique to this runner. It is copied in and found through
+          # an rpath relative to the executable, so the tarball runs on a
+          # machine that has never heard of SDL3.
+          STAGE=pong-pc-linux-x86_64
+          mkdir -p "$STAGE"
+          cp pc/pong-pc "$STAGE/"
+          cp -L "$HOME"/sdl3-install/lib*/libSDL3.so* "$STAGE/" 2>/dev/null || true
+          patchelf --set-rpath '$ORIGIN' "$STAGE/pong-pc" 2>/dev/null || \
+            (sudo apt-get install -y patchelf && patchelf --set-rpath '$ORIGIN' "$STAGE/pong-pc")
+          ldd "$STAGE/pong-pc" || true
+
+          cat > "$STAGE/README.txt" <<'EOF'
+          Pong - desktop build (Linux x86_64)
+
+            ./pong-pc
+
+          SDL3 is bundled beside the binary and found through an rpath, so
+          nothing needs installing.
+
+          Settings live in pong-pc.cfg beside the binary; SERVER and NAME are
+          editable from the menu. This build speaks raw TCP to a server on your
+          network -- for internet play, open the web client.
+
+          Controls: arrows or W/S, mouse, or a gamepad. Enter selects, Esc back.
+          EOF
+
+          tar czf "$STAGE.tar.gz" "$STAGE"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-build
+          path: pong-pc-linux-x86_64.tar.gz
+          if-no-files-found: error
+
+  # ------------------------------------------------------------ windows -----
+  #
+  # MSVC and native Winsock. net_pc.c already branches on _WIN32 for the socket
+  # differences, so the compiler choice costs nothing above that layer -- and
+  # an MSVC binary needs no MinGW runtime beside it, only SDL3.dll.
+  #
+  # Built by invoking cl directly rather than adding CMake: six source files
+  # and two libraries do not need a build system, and the one that exists for
+  # the other platforms is a Makefile MSVC cannot read.
+  windows:
+    name: Build Windows (MSVC)
+    needs: verify
+    runs-on: windows-latest
+    env:
+      SDL_VERSION: "3.4.16"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Fetch the SDL3 VC package
+        shell: pwsh
+        run: |
+          $url = "https://github.com/libsdl-org/SDL/releases/download/release-$env:SDL_VERSION/SDL3-devel-$env:SDL_VERSION-VC.zip"
+          Write-Host "downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile sdl3.zip
+          Expand-Archive -Path sdl3.zip -DestinationPath sdl3 -Force
+          Get-ChildItem sdl3
+
+      - name: Build
+        shell: cmd
+        env:
+          BUILD_NUM: ${{ github.run_number }}
+        run: |
+          set SDLDIR=sdl3\SDL3-%SDL_VERSION%
+          cl /nologo /std:c11 /O2 /W3 /D_CRT_SECURE_NO_WARNINGS ^
+             /DPONG_BUILD_ID=%BUILD_NUM% ^
+             /Ipc /Isrc /Isrc\sim /Isrc\gfx /Isrc\ui /I3ds\source\game /I3ds\source\net ^
+             /I%SDLDIR%\include ^
+             pc\main_sdl.c pc\net_pc.c ^
+             src\gfx\sdl3\gfx_sdl3.c src\ui\desktop.c ^
+             src\sim\pong_sim.c src\sim\pong_bot.c src\sim\pong_local.c ^
+             3ds\source\net\pong_proto.c 3ds\source\game\client.c ^
+             /Fe:pong-pc.exe ^
+             /link /LIBPATH:%SDLDIR%\lib\x64 SDL3.lib ws2_32.lib
+          if errorlevel 1 exit /b 1
+
+      - name: Bundle
+        shell: pwsh
+        run: |
+          $stage = "pong-pc-windows-x86_64"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item pong-pc.exe $stage
+          # SDL3.dll is the only runtime dependency an MSVC build has beyond
+          # what Windows itself ships.
+          Copy-Item "sdl3\SDL3-$env:SDL_VERSION\lib\x64\SDL3.dll" $stage
+          @"
+          Pong - desktop build (Windows x64)
+
+            pong-pc.exe
+
+          Keep SDL3.dll beside the exe.
+
+          Settings live in pong-pc.cfg beside the exe; SERVER and NAME are
+          editable from the menu. This build speaks raw TCP to a server on your
+          network -- for internet play, open the web client.
+
+          Controls: arrows or W/S, mouse, or a gamepad (a DualSense works
+          as-is). Enter selects, Esc back.
+          "@ | Set-Content "$stage\README.txt"
+          Compress-Archive -Path $stage -DestinationPath "$stage.zip" -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: pong-pc-windows-x86_64.zip
+          if-no-files-found: error
+
+  # --------------------------------------------------------------- vita -----
+  #
+  # The Vita build. Written without a VitaSDK to hand and debugged through this
+  # job, which found all four of the reasons it did not work: a shell without
+  # pipefail, a stub the image references but does not ship, an upstream
+  # ceil() without math.h, and -- the one that cost three hardware crashes --
+  # a missing -Wl,-q, without which the module loads unrelocated and faults
+  # before main().
+  vita:
+    name: Build Vita (vita2d)
+    needs: verify
+    runs-on: ubuntu-latest
+    # continue-on-error is gone: this builds, runs, and plays against every
+    # other client. A break here is now a real break.
+    container: vitasdk/vitasdk:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The image ships a prebuilt libvita2d.a that references sceSharedFbBegin,
+      # End and Close -- and no SceSharedFb stub, as listing the stub directory
+      # showed: nothing there matches Fb or Shared at all. The library and the
+      # stub set in this image disagree with each other, which is not something
+      # a link line can fix.
+      #
+      # Building vita2d from source against the stubs that ARE installed
+      # resolves it by construction, and takes about a minute.
+      - name: What the SDK provides
+        shell: bash
+        run: |
+          # Listed rather than guessed. Two stub names have been wrong already,
+          # and one CI run buys the real list outright.
+          echo "--- kernel-ish stubs ---"
+          ls "$VITASDK/arm-vita-eabi/lib/" | grep -iE "libSce(LibKernel|Iofilemgr|Sysmem|Processmgr|Thread|Rtc|Kernel)" || echo "(none)"
+
+      - name: Build vita2d from source
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$VITASDK/bin:$PATH"
+          git clone --depth 1 https://github.com/xerpi/libvita2d.git /tmp/vita2d
+
+          # libvita2d's JPEG loader calls ceil() without including <math.h>.
+          # Older compilers accepted the implicit declaration; the GCC in this
+          # image rejects it, so the library will not build as published.
+          #
+          # Patched here rather than worked around with -Wno-implicit-function
+          # -declaration, because that flag would hide the same class of error
+          # in every other file too. We never call the JPEG loader -- the build
+          # simply compiles it.
+          if ! grep -q "math.h" /tmp/vita2d/libvita2d/source/vita2d_image_jpeg.c; then
+            sed -i '1i #include <math.h>' /tmp/vita2d/libvita2d/source/vita2d_image_jpeg.c
+            echo "patched vita2d_image_jpeg.c with <math.h>"
+          fi
+
+          make -C /tmp/vita2d/libvita2d install
+
+      - name: Build
+        shell: bash        # the container defaults to dash, which has no pipefail
+        run: |
+          set -euo pipefail
+          export PATH="$VITASDK/bin:$PATH"
+          make -C vita BUILD_ID=${{ github.run_number }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vita-build
+          # The .elf goes up with the .vpk because the .vpk is stripped, and a
+          # Vita crash dump is a list of addresses with nothing to map them to.
+          # The first crash cost a round trip purely because the symbols had
+          # been thrown away at the point they became useful.
+          path: |
+            vita/pong-vita.vpk
+            vita/pong-vita-debug.elf
+            vita/hello.vpk
+          if-no-files-found: warn
+
+
   cia:
     name: Build 3DS (.3dsx + .cia)
-    needs: verify
+    needs: [verify, mac, linux, windows, vita]
     runs-on: ubuntu-latest
     permissions:
       contents: write      # required to create releases
@@ -275,6 +590,12 @@ jobs:
             3ds/pong3ds.cia
           retention-days: 30
 
+      - name: Fetch the desktop builds
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "*-build"
+          merge-multiple: true
+
       - name: Publish release
         if: github.event_name != 'pull_request'
         env:
@@ -286,23 +607,41 @@ jobs:
         run: |
           set -euo pipefail
 
+          # One kind of release: build-N, every time, whatever the ref.
+          #
+          # Version tags were tried and caused nothing but trouble. A version
+          # cannot be compared the way an update check needs -- v1.1.1 reads as
+          # 1, which left a console on build 93 insisting it was up to date --
+          # and because a version release is not a prerelease it took the
+          # "Latest" badge and kept it, burying every build published after it.
+          #
+          # NOT a prerelease, deliberately: GitHub refuses to let a prerelease
+          # be Latest, so while builds were prereleases the newest one could
+          # never reach the top of the page no matter how high its number.
+          # Every change gets a higher number, and the highest is the one you
+          # land on.
+          TAG="build-$BUILD_NUM"
+          TITLE="Build $BUILD_NUM"
+          PRERELEASE=""
           if [ "$IS_TAG" = "true" ]; then
-            TAG="$REF_NAME"
-            TITLE="Pong3DS $REF_NAME"
-            PRERELEASE=""
-          else
-            TAG="build-$BUILD_NUM"
-            TITLE="Build $BUILD_NUM"
-            PRERELEASE="--prerelease"
+            echo "::notice::Tag $REF_NAME pushed; publishing as $TAG regardless."
           fi
 
           # Notes are written to a file rather than passed inline, so nothing
           # from the commit can be interpreted as shell.
           {
-            printf '3DS client, build %s (`%s`).\n\n' "$BUILD_NUM" "${SHA:0:7}"
-            printf '| file | install |\n|---|---|\n'
-            printf '| `pong3ds.cia` | Install with FBI. Own HOME-menu title, 64MB mode. |\n'
-            printf '| `pong3ds.3dsx` | Copy to `sd:/3ds/`, launch from the Homebrew Launcher. |\n\n'
+            printf 'Build %s (`%s`). One game, one protocol, an interface per platform.\n\n' \
+              "$BUILD_NUM" "${SHA:0:7}"
+            printf '| file | platform | install |\n|---|---|---|\n'
+            printf '| `pong3ds.cia` | 3DS | Install with FBI. Own HOME-menu title. |\n'
+            printf '| `pong3ds.3dsx` | 3DS | Copy to `sd:/3ds/`, launch from the Homebrew Launcher. |\n'
+            printf '| `pong-pc-macos-arm64.zip` | macOS (Apple silicon) | Unzip, run `./pong-pc`. SDL3 bundled. |\n'
+            printf '| `pong-pc-windows-x86_64.zip` | Windows | Unzip, run `pong-pc.exe`. DLLs included. |\n'
+            printf '| `pong-pc-linux-x86_64.tar.gz` | Linux | Extract, run `./pong-pc`. SDL3 bundled. |\n'
+            printf '| `pong-vita.vpk` | PS Vita | Install with VitaShell. |\n\n'
+            printf 'The Mac build speaks **raw TCP only** -- it plays against a server on your\n'
+            printf 'network, not through the tunnel. For internet play from a desktop, open the\n'
+            printf 'web client. Keyboard, mouse or a gamepad; a DualSense works as-is.\n\n'
             printf 'Tap the server field on the title screen to enter an address:\n\n'
             printf -- '- `pong.wardcrew.com` - HTTPS on 443 (works anywhere)\n'
             printf -- '- `192.168.4.29:8788` - plain HTTP on a LAN\n'
@@ -316,12 +655,25 @@ jobs:
             gh release delete "$TAG" --yes --cleanup-tag || true
           fi
 
+          # --latest explicitly, rather than letting GitHub infer it.
+          #
+          # GitHub picks Latest by the date of the COMMIT a tag points at, not
+          # by build number. Retagging an old release onto a newer commit is
+          # therefore enough to steal the badge -- which is exactly what
+          # happened: build-108, retagged today, outranked build-120. The badge
+          # is what pins a release to the top of the page, so it is stated
+          # rather than inferred.
           gh release create "$TAG" \
             --title "$TITLE" \
             --notes-file /tmp/notes.md \
+            --latest \
             $PRERELEASE \
             3ds/pong3ds.cia \
-            3ds/pong3ds.3dsx
+            3ds/pong3ds.3dsx \
+            pong-pc-macos-arm64.zip \
+            pong-pc-windows-x86_64.zip \
+            pong-pc-linux-x86_64.tar.gz \
+            pong-vita.vpk
 
           printf '### Released\n\n[%s](%s)\n' "$TAG" \
             "https://github.com/${GITHUB_REPOSITORY}/releases/tag/$TAG" >> "$GITHUB_STEP_SUMMARY"

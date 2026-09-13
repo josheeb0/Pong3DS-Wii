@@ -4,6 +4,7 @@
 #include <3ds.h>
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>   /* strcasecmp */
 #include <stdlib.h>
 #include <errno.h>
 #include <unistd.h>
@@ -258,7 +259,19 @@ static int tcp_connect(const char *host, uint16_t port, uint32_t timeout_ms,
     uint64_t t_dns = osGetTime();
     int gai = getaddrinfo(host, portstr, &hints, &res);
     if (gai != 0 || res == NULL) {
-        snprintf(err, errcap, "cannot resolve %s (gai %d)", host, gai);
+        {
+            /* Same platform limitation as the LAN path: .local is mDNS, and
+             * this console has no resolver for it. Say so rather than leaving a
+             * getaddrinfo code to interpret. */
+            size_t hn = strlen(host);
+            if (hn > 6 && strcasecmp(host + hn - 6, ".local") == 0) {
+                snprintf(err, errcap,
+                         "%s is a .local name - the 3DS cannot resolve those, use the IP",
+                         host);
+            } else {
+                snprintf(err, errcap, "cannot resolve %s (gai %d)", host, gai);
+            }
+        }
         pong_log("  DNS   %s -> FAILED (gai %d, %llums)", host, gai,
                  (unsigned long long)(osGetTime() - t_dns));
         return -1;
@@ -678,6 +691,11 @@ HttpsResult https_request(HttpsConn *c,
         }
     }
 
+    /* Recorded before the body is touched, so that a response too large to
+     * accept can report the two numbers that explain it instead of a bare -7. */
+    resp->content_length = content_len;
+    resp->body_cap = out_cap;
+
     /* Whatever arrived after the header block is the start of the body. */
     uint8_t tail[sizeof hbuf];
     size_t tail_len = hlen - header_end;
@@ -724,13 +742,21 @@ HttpsResult https_request(HttpsConn *c,
                 if (n <= 0) { c->open = false; return HTTPS_ERR_READ; }
                 wlen += (size_t)n;
             }
-            if (got + (size_t)chunk > out_cap) return HTTPS_ERR_TOOBIG;
+            if (got + (size_t)chunk > out_cap) {
+                pong_log("  HTTP  chunked body exceeds buffer: %u+%ld > %u",
+                         (unsigned)got, chunk, (unsigned)out_cap);
+                return HTTPS_ERR_TOOBIG;
+            }
             memcpy(out + got, work + pos, (size_t)chunk);
             got += (size_t)chunk;
             pos += (size_t)chunk + 2;
         }
     } else if (content_len > 0) {
-        if ((size_t)content_len > out_cap) return HTTPS_ERR_TOOBIG;
+        if ((size_t)content_len > out_cap) {
+            pong_log("  HTTP  body is %ld bytes, buffer holds %u -- giving up",
+                     content_len, (unsigned)out_cap);
+            return HTTPS_ERR_TOOBIG;
+        }
         size_t want = (size_t)content_len;
         size_t take = tail_len < want ? tail_len : want;
         memcpy(out, tail, take);

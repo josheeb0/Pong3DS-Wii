@@ -19,6 +19,12 @@ RUN node tools/gen-protocol.mjs
 # ---------- web client -------------------------------------------------------
 FROM node:22-alpine AS webbuild
 WORKDIR /app
+# The build number has to be declared HERE as well as in the runtime stage.
+# Docker ARGs are scoped per stage, and the browser bundle bakes it in at build
+# time -- without this the page would report 0 while /healthz reported the real
+# number, which is worse than showing nothing.
+ARG BUILD_ID=0
+ENV BUILD_ID=${BUILD_ID}
 COPY web/package*.json ./web/
 RUN cd web && npm ci --no-audit --no-fund
 COPY --from=proto /app/shared ./shared

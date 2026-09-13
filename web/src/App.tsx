@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   AppBar, Box, Button, Chip, Dialog, DialogContent, DialogTitle, Divider,
   Drawer, IconButton, LinearProgress, Stack, TextField, Toolbar, Tooltip, Typography,
@@ -13,12 +13,18 @@ import { JoinMode, Platform, MatchStateName } from '../../shared/gen/protocol';
 import { GameClient } from './game/client';
 import PongCanvas from './components/PongCanvas';
 import type { RungName } from './net/ladder';
+import { AI_LEVELS, type AiLevel } from './game/local';
 
 const PLATFORM_LABEL: Record<number, string> = {
   [Platform.UNKNOWN]: '?',
   [Platform.WEB]: 'BROWSER',
   [Platform.N3DS]: '3DS',
   [Platform.WII]: 'WII',
+  // Added when the desktop and Vita clients arrived. Without them a real
+  // opponent was labelled '?', which reads as a fault rather than a platform
+  // this build had not heard of.
+  [Platform.PC]: 'PC',
+  [Platform.VITA]: 'VITA',
 };
 
 /** `?transport=ws|sse|poll` forces a rung, for testing the ladder. */
@@ -42,6 +48,31 @@ export default function App() {
   const [room, setRoom] = useState('');
   const [debugOpen, setDebugOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  /*
+   * The server's build number, read from /healthz.
+   *
+   * Not carried in WELCOME, because adding a field there means regenerating
+   * both codecs and every client for a number only this panel reads. One fetch
+   * is the proportionate answer. Failure is silent and shows as a dash: this is
+   * diagnostic decoration, and it must never be the reason the page is broken.
+   */
+  /* Remembered, because picking a difficulty then losing and picking again
+   * should not silently reset it. */
+  const [aiLevel, setAiLevel] = useState<AiLevel>(() => {
+    const v = localStorage.getItem('pong.ai') as AiLevel | null;
+    return v && (AI_LEVELS as readonly string[]).includes(v) ? v : 'NORMAL';
+  });
+
+  const [serverBuild, setServerBuild] = useState<number | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetch('/healthz')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (live && j && typeof j.build === 'number') setServerBuild(j.build); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, []);
 
   const base = useMemo(() => {
     // In dev, Vite proxies /api to the server; in production the server serves
@@ -77,7 +108,23 @@ export default function App() {
         <Toolbar variant="dense" sx={{ gap: 1 }}>
           <Typography variant="h1" sx={{ fontSize: '1rem', flexGrow: 1 }}>
             PONG MULTIPLAYER!
+            <Box component="span" sx={{ opacity: 0.55, fontSize: '0.78rem', ml: 1.5 }}>
+              3DS · Vita · Windows · macOS · Linux · browser
+            </Box>
           </Typography>
+
+          {/* Always visible, not tucked in the debug drawer. Its whole job is
+              answering "is the thing I am looking at the thing that was just
+              deployed", and a number you have to open a panel to find does not
+              answer that. Dimmed so it stays out of the way while playing. */}
+          <Tooltip title={__BUILD_ID__ === 0
+            ? 'A local build. No published build is ever 0.'
+            : 'The build this page was compiled from. The server\'s own build is in the debug panel; they disagree when a deploy is half-finished or the browser is holding a cached bundle.'}>
+            <Typography variant="body2"
+              sx={{ opacity: 0.5, fontFamily: 'monospace', fontSize: '0.72rem', mr: 0.5 }}>
+              {__BUILD_ID__ === 0 ? 'DEV' : `BUILD ${__BUILD_ID__}`}
+            </Typography>
+          </Tooltip>
 
           {connected && (
             <>
@@ -154,17 +201,52 @@ export default function App() {
                 onClick={() => void play(JoinMode.ROOM_CODE, room)}>
                 Join room
               </Button>
+
+              {/* Offline. Deliberately NOT disabled by `busy` and needing no
+                  connection at all: when the server is unreachable these are
+                  the only two things on this page that still work, which is
+                  most of the reason they exist. */}
+              <Button variant="outlined" startIcon={<SmartToyIcon />}
+                onClick={() => client.startLocal('ai', aiLevel)}>
+                Vs AI
+              </Button>
+              <TextField
+                select size="small" label="difficulty" value={aiLevel}
+                onChange={(e) => {
+                  const v = e.target.value as AiLevel;
+                  setAiLevel(v);
+                  localStorage.setItem('pong.ai', v);
+                }}
+                SelectProps={{ native: true }}
+                sx={{ width: 120 }}
+              >
+                {AI_LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
+              </TextField>
+              <Button variant="outlined" startIcon={<GroupsIcon />}
+                onClick={() => client.startLocal('two-player', aiLevel)}>
+                2 players
+              </Button>
             </>
           )}
           {inMatch && (
-            <Button variant="outlined" onClick={() => client.leave()}>Leave match</Button>
+            <Button variant="outlined"
+              onClick={() => (client.inLocal ? client.stopLocal() : client.leave())}>
+              Leave match
+            </Button>
           )}
         </Stack>
 
         <Typography variant="caption" color="text.secondary" align="center">
           {hud.status === 'queued'
-            ? 'Waiting for an opponent — a 3DS gets priority. A CPU opponent is offered after 15s.'
-            : 'Move with the mouse, or ↑/↓ (W/S).'}
+            // No longer true that a 3DS gets priority: the pairing delay that
+            // implemented it made two same-platform players wait eight seconds
+            // every time, and was removed.
+            ? 'Waiting for an opponent — 3DS, Vita, desktop or another browser. A CPU opponent is offered after 15s.'
+            : client.inLocal && client.localMode === 'two-player'
+              // Two people at one keyboard: the hint has to say whose keys are
+              // whose, because nothing on screen otherwise does.
+              ? 'Player 1: W/S or the mouse.   Player 2: ↑/↓.'
+              : 'Move with the mouse, or ↑/↓ (W/S).'}
         </Typography>
 
         {hud.error && (
@@ -201,6 +283,15 @@ export default function App() {
             <Row k="slow mode" v={hud.slowMode ? 'on' : 'off'} />
           </Stack>
 
+          <Typography variant="overline" color="text.secondary">Build</Typography>
+          <Stack spacing={0.25} sx={{ mb: 2 }}>
+            {/* Two numbers on purpose. They disagree exactly when a deploy is
+                half-finished or a browser is holding a cached bundle, which is
+                the case worth being able to see. */}
+            <Row k="this page" v={__BUILD_ID__ === 0 ? 'dev' : String(__BUILD_ID__)} />
+            <Row k="server" v={serverBuild === null ? '—' : String(serverBuild)} />
+          </Stack>
+
           <Typography variant="caption" color="text.secondary">
             Force a rung by reloading with <code>?transport=ws</code>, <code>sse</code> or <code>poll</code>.
             The working rung is cached for 10 minutes so a blocked WebSocket is not re-probed every load.
@@ -214,7 +305,11 @@ export default function App() {
         </DialogTitle>
         <DialogContent>
           <Typography sx={{ mb: 2 }}>Final score {hud.scoreL} — {hud.scoreR}</Typography>
-          <Button variant="contained" onClick={() => client.join(JoinMode.QUICKMATCH)}>Play again</Button>
+          {/* Again means the same KIND of match: dropping a local player into
+              quickmatch is a surprising thing for that button to do. */}
+          <Button variant="contained" onClick={() => (client.inLocal
+            ? client.startLocal(client.localMode ?? 'ai', aiLevel)
+            : client.join(JoinMode.QUICKMATCH))}>Play again</Button>
         </DialogContent>
       </Dialog>
     </Box>

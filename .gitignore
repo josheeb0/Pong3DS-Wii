@@ -38,3 +38,15 @@ build/
 
 # TypeScript incremental build state
 *.tsbuildinfo
+
+# PC build products. A committed macOS binary broke Linux CI once already
+# (3ds/test/test_*), so the pattern is listed before the mistake repeats.
+pc/pong-pc
+pc/*.dSYM/
+pc/*.bmp
+vita/*.elf
+vita/*.velf
+vita/*.vpk
+vita/eboot.bin
+vita/param.sfo
+pc/pong-pc.cfg

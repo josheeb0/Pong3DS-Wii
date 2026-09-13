@@ -11,7 +11,7 @@
  * equally to both sides.
  */
 
-import { FIELD_H_Q, PADDLE_HALF_Q, type MatchState, type PlayerInput } from '../sim/pong.js';
+import { FIELD_H_Q, PADDLE_HALF_Q, type MatchState, type PlayerInput } from './pong.js';
 
 export class Bot {
   readonly side: number;
