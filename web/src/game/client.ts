@@ -225,6 +225,30 @@ export class GameClient {
         case MsgType.MATCH_START: {
           const m = decodeMATCH_START(f.buf, f.payloadOff);
           this.ring.clear();
+
+          /*
+           * Forget the previous match's paddle state.
+           *
+           * The server builds a fresh simulation per match, so its tick counter
+           * starts again at zero. Our own-paddle update accepts a snapshot only
+           * when it is at least as new as the last tick seen -- correct within a
+           * match, where it rejects snapshots that arrive out of order, and
+           * fatal across one: every tick of the new match is "older" than the
+           * tick left over from the old, so none is accepted. The authoritative
+           * position then stays pinned wherever the last game ended, prediction
+           * has nothing to advance from, and the paddle stops responding to
+           * input until the page is reloaded.
+           *
+           * Centred rather than kept, because that is where the server puts the
+           * paddles at the start of a match. `targetY` is deliberately NOT
+           * reset: the pointer has not moved, so the player's intent still
+           * stands, and the paddle travels to it under the same speed clamp the
+           * server applies.
+           */
+          this.myServerTick = 0;
+          this.myServerY = FIELD_H_Q4 >> 1;
+          this.myY = FIELD_H_Q4 >> 1;
+
           this.setHud({
             status: 'playing',
             side: m.yourSide,
