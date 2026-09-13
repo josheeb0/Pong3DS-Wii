@@ -61,6 +61,19 @@ struct PongNetHttps {
     uint32_t last_poll_ms;
     bool     failed;
     char     err[192];
+
+    /*
+     * The session id, kept HERE rather than only on the TLS handle.
+     *
+     * It has to outlive the connection: a keep-alive socket through a tunnel
+     * gets closed regularly -- by the tunnel, by the server, by an idle window
+     * -- and the whole point of the protocol carrying a session id is that
+     * identity survives that. Reconnecting with the same id resumes the match;
+     * reconnecting without it starts a new one, which looks to the player like
+     * being thrown out of a game they were winning.
+     */
+    char session[80];
+    uint32_t reconnects;
 };
 
 static uint32_t now_ms(void)
@@ -104,6 +117,7 @@ PongNetHttps *pong_https_net_connect(const char *host, uint16_t port, bool verif
     n->in_len = got;
     n->in_pos = 0;
     n->last_poll_ms = now_ms();
+    snprintf(n->session, sizeof n->session, "%s", pong_https_session(n->h));
     return n;
 }
 
@@ -158,13 +172,50 @@ int pong_https_net_recv(PongNetHttps *n, uint8_t *buf, size_t cap)
     n->last_poll_ms = t;
 
     char hdr[128] = "";
-    const char *sess = pong_https_session(n->h);
-    if (sess && sess[0]) snprintf(hdr, sizeof hdr, "X-Pong-Session: %s\r\n", sess);
+    if (n->session[0]) snprintf(hdr, sizeof hdr, "X-Pong-Session: %s\r\n", n->session);
 
     size_t got = 0; int status = 0;
     PongHttpsResult rc = pong_https_post(n->h, "/api/rpc", hdr,
                                          n->out, n->out_len,
                                          n->in, sizeof n->in, &got, &status);
+
+    /*
+     * A dead connection is not a dead match.
+     *
+     * A keep-alive socket through a tunnel gets closed regularly, and treating
+     * that as the end of the game was wrong: it showed up as the client
+     * "randomly disconnecting" with nothing to explain it, because from the
+     * player's side nothing had happened. The session id outlives the socket,
+     * so the fix is to dial again and carry on.
+     *
+     * Only CONNECTION failures are retried. An HTTP status the server chose --
+     * a 404 for a session it has forgotten, say -- is a real answer and
+     * retrying it would just spin.
+     */
+    const bool connection_died = (rc == PONG_HTTPS_ERR_READ ||
+                                  rc == PONG_HTTPS_ERR_WRITE ||
+                                  rc == PONG_HTTPS_ERR_CONNECT ||
+                                  !pong_https_alive(n->h));
+
+    if (rc != PONG_HTTPS_OK && connection_died) {
+        char err[192] = "";
+        pong_https_close(n->h);
+        n->h = pong_https_open(n->host, n->port, n->verify, err, sizeof err);
+        if (!n->h) {
+            /* Bounded: the open() message can be longer than this buffer. */
+            snprintf(n->err, sizeof n->err, "reconnect failed: %.150s", err);
+            n->failed = true;
+            return -1;
+        }
+        n->reconnects++;
+
+        /* The same request again, with the same session and the same pending
+         * input -- which was never cleared, precisely so this can happen. */
+        got = 0; status = 0;
+        rc = pong_https_post(n->h, "/api/rpc", hdr, n->out, n->out_len,
+                             n->in, sizeof n->in, &got, &status);
+    }
+
     if (rc != PONG_HTTPS_OK || status != 200) {
         snprintf(n->err, sizeof n->err, "rpc failed (rc %d, HTTP %d)", (int)rc, status);
         n->failed = true;
@@ -175,6 +226,10 @@ int pong_https_net_recv(PongNetHttps *n, uint8_t *buf, size_t cap)
      * leaves the queue intact so the next one carries the same input rather
      * than silently losing a player's last move. */
     n->out_len = 0;
+    {
+        const char *sess = pong_https_session(n->h);
+        if (sess && sess[0]) snprintf(n->session, sizeof n->session, "%s", sess);
+    }
 
     n->in_len = got;
     n->in_pos = 0;
@@ -185,6 +240,8 @@ int pong_https_net_recv(PongNetHttps *n, uint8_t *buf, size_t cap)
     n->in_pos = take;
     return (int)take;
 }
+
+uint32_t pong_https_net_reconnects(const PongNetHttps *n) { return n ? n->reconnects : 0; }
 
 const char *pong_https_net_error(const PongNetHttps *n)
 {

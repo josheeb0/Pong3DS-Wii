@@ -218,7 +218,15 @@ static void begin_connect(App *a, uint8_t mode)
 
 static void leave_match(App *a)
 {
-    if (a->net) { pong_pc_close(a->net); a->net = NULL; }
+    /*
+     * net_close, not pong_pc_close.
+     *
+     * This closed only the TCP transport, so leaving an HTTPS match left the
+     * session open: the server kept playing -- a bot match especially -- and
+     * its events kept arriving and making NOISES while the player sat on the
+     * menu listening to a game they had left.
+     */
+    net_close(a);
     a->acc_len = 0;
     a->hud.screen = DESK_MENU;
     a->toast[0] = '\0';
