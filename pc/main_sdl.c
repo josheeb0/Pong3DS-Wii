@@ -16,8 +16,8 @@
 #include "gfx.h"
 #include "desktop.h"
 #include "pong_local.h"
-#include "lanshape.h"
 #include "net_https_pc.h"
+#include "addr.h"
 #include "audio.h"
 #include "sfx_events.h"
 #include "net_pc.h"
@@ -52,8 +52,18 @@ typedef struct {
      * equivalent -- online there is never a second local player. */
     int32_t     p2_target;
 
+    /*
+     * The address exactly as typed, plus what it parses to.
+     *
+     * Parsed by pong_addr_parse -- the same function the 3DS uses, with its own
+     * test suite -- rather than by a local sscanf. The local one split on the
+     * FIRST colon, so "https://host:9000" matched "https", failed to find a
+     * port after it, and fell through to the default of 443. Reported as "it
+     * auto adds 443 to end", and it also mangled IPv6 literals the same way.
+     */
     char        server[128];
     uint16_t    port;
+    PongNetConfig addr;
     char        name[17];
     char        room[8];
 
@@ -174,18 +184,6 @@ static void begin_connect(App *a, uint8_t mode)
     /* No port means the address could not be resolved to one -- a public
      * hostname this client has no transport for. Say so here rather than
      * dialling port 0 and reporting whatever the OS makes of that. */
-    /*
-     * A LAN address with no port is the only case left that cannot proceed.
-     * A public one no longer needs a port at all -- it defaults to 443, because
-     * this client can finally speak HTTPS. That refusal was correct when it was
-     * written and is now just an obstacle.
-     */
-    if (a->port == 0 && pong_lan_shaped(a->server)) {
-        snprintf(a->error, sizeof a->error, "no port for %s",
-                 a->server[0] ? a->server : "(unset)");
-        a->hud.screen = DESK_ERROR;
-        return;
-    }
 
     a->hud.screen = DESK_CONNECTING;
     /*
@@ -196,12 +194,15 @@ static void begin_connect(App *a, uint8_t mode)
      * through a tunnel. Anything else gets HTTPS, because that is the only way
      * in from outside.
      */
-    if (pong_lan_shaped(a->server)) {
-        a->net = pong_pc_connect(a->server, a->port, 3000, err, sizeof err);
+    if (a->addr.lan_host[0]) {
+        /* Raw TCP, which is dramatically better where it applies -- 60Hz
+         * against a poll, and single-digit latency instead of a tunnel hop. */
+        a->net = pong_pc_connect(a->addr.lan_host, a->addr.lan_port, 3000,
+                                 err, sizeof err);
     } else {
-        /* 443 unless the player named a port. */
-        uint16_t port = a->port ? a->port : 443;
-        a->hnet = pong_https_net_connect(a->server, port, true, err, sizeof err);
+        a->hnet = pong_https_net_connect(a->addr.web_host, a->addr.web_port,
+                                         a->addr.web_tls, a->addr.web_verify,
+                                         err, sizeof err);
     }
 
     if (!net_open(a)) {
@@ -421,6 +422,32 @@ static void end_local(App *a)
     a->hud.screen = DESK_MENU;
 }
 
+/*
+ * Turns the stored address into a parsed one.
+ *
+ * Config files predating this kept the host and the port on separate lines, so
+ * a bare host is recombined with its port before parsing. Without that, an
+ * existing pong-pc.cfg would load a host with no port and quietly connect
+ * somewhere else -- an upgrade silently changing where you connect is worse
+ * than one that fails.
+ */
+static void resolve_addr(App *a)
+{
+    char typed[160];
+    bool has_port = strchr(a->server, ':') != NULL;
+    bool has_scheme = strstr(a->server, "://") != NULL;
+
+    if (!has_port && !has_scheme && a->port)
+        snprintf(typed, sizeof typed, "%s:%u", a->server, (unsigned)a->port);
+    else
+        snprintf(typed, sizeof typed, "%s", a->server);
+
+    char why[128] = "";
+    memset(&a->addr, 0, sizeof a->addr);
+    if (!pong_addr_parse(typed, &a->addr, why, sizeof why))
+        snprintf(a->toast, sizeof a->toast, "server address: %s", why);
+}
+
 static void open_editor(App *a, int target)
 {
     a->editing = true;
@@ -443,39 +470,27 @@ static void open_editor(App *a, int target)
 static void commit_editor(App *a)
 {
     if (a->edit_target == DESK_ITEM_SERVER) {
-        char host[128];
-        unsigned port = 0;
-        if (sscanf(a->edit_buf, "%127[^:]:%u", host, &port) == 2 && port > 0 && port < 65536) {
-            snprintf(a->server, sizeof a->server, "%s", host);
-            a->port = (uint16_t)port;
-            snprintf(a->toast, sizeof a->toast, "server %s:%u", a->server, (unsigned)a->port);
-        } else {
-            snprintf(a->server, sizeof a->server, "%s", a->edit_buf);
+        PongNetConfig cfg;
+        memset(&cfg, 0, sizeof cfg);
+        char why[128] = "";
 
-            /*
-             * 8787 is assumed for a LAN address and NOT for anything else.
-             *
-             * It used to be assumed for everything, so typing
-             * pong.wardcrew.com quietly became pong.wardcrew.com:8787 and then
-             * failed to connect with nothing to explain why. The port was not
-             * really the problem: this client speaks raw framed TCP and has no
-             * TLS at all, while the public deployment is reachable only over
-             * HTTPS on 443 through a tunnel. No port makes that hostname work
-             * here, so guessing one only buys a more confusing failure.
-             *
-             * A LAN address still gets the convenience, because there 8787 is
-             * genuinely the right answer and typing it every time is noise.
-             */
-            if (pong_lan_shaped(a->server)) {
-                a->port = 8787;
-                snprintf(a->toast, sizeof a->toast, "server %s:%u", a->server, (unsigned)a->port);
+        if (!pong_addr_parse(a->edit_buf, &cfg, why, sizeof why)) {
+            snprintf(a->toast, sizeof a->toast, "%s", why);
+        } else {
+            a->addr = cfg;
+            snprintf(a->server, sizeof a->server, "%s", a->edit_buf);
+            /* Stored as the single typed string from here on, so a reload
+             * parses exactly what was typed rather than a reconstruction. */
+
+            if (cfg.lan_host[0]) {
+                a->port = cfg.lan_port;
+                snprintf(a->toast, sizeof a->toast, "server %s:%u over TCP",
+                         cfg.lan_host, (unsigned)cfg.lan_port);
             } else {
-                a->port = 0;
-                /* 443, because this client speaks HTTPS now. The old message
-                 * here refused the address outright, which was true then. */
-                a->port = 443;
-                snprintf(a->toast, sizeof a->toast,
-                         "server %s over HTTPS", a->server);
+                a->port = cfg.web_port;
+                snprintf(a->toast, sizeof a->toast, "server %s:%u over %s",
+                         cfg.web_host, (unsigned)cfg.web_port,
+                         cfg.web_tls ? "HTTPS" : "HTTP");
             }
         }
     } else if (a->edit_target == DESK_ITEM_NAME) {
@@ -517,6 +532,7 @@ int main(int argc, char **argv)
      * the game. */
     app.hud.ai_level = PONG_BOT_NORMAL;
     cfg_load(&app);
+    resolve_addr(&app);
     pong_client_init(&app.client);
 
     for (int i = 1; i + 1 < argc; i++) {

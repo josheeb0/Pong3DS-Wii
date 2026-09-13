@@ -17,7 +17,8 @@
 
 typedef struct PongNetHttps PongNetHttps;
 
-PongNetHttps *pong_https_net_connect(const char *host, uint16_t port, bool verify,
+PongNetHttps *pong_https_net_connect(const char *host, uint16_t port,
+                                     bool tls, bool verify,
                                      char *err, size_t errcap);
 void pong_https_net_close(PongNetHttps *n);
 int  pong_https_net_recv(PongNetHttps *n, uint8_t *buf, size_t cap);

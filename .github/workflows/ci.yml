@@ -562,10 +562,11 @@ jobs:
           rem library expects those symbols imported from a DLL.
           cl /nologo /std:c11 /O2 /W3 /MD /D_CRT_SECURE_NO_WARNINGS ^
              /DPONG_BUILD_ID=%BUILD_NUM% ^
-             /Ipc /Ipc\vendor\mbedtls\include /Isrc /Isrc\sim /Isrc\audio /Isrc\gfx /Isrc\ui /I3ds\source\game /I3ds\source\net ^
+             /Ipc /Ipc\vendor\mbedtls\include /I3ds\source\util /Isrc /Isrc\sim /Isrc\audio /Isrc\gfx /Isrc\ui /I3ds\source\game /I3ds\source\net ^
              /I%SDLDIR%\include ^
-             pc\main_sdl.c pc\net_pc.c pc\lanshape.c ^
+             pc\main_sdl.c pc\net_pc.c ^
              pc\https_pc.c pc\net_https_pc.c ^
+             3ds\source\util\addr.c ^
              src\gfx\sdl3\gfx_sdl3.c src\ui\desktop.c ^
              src\sim\pong_sim.c src\sim\pong_bot.c src\sim\pong_local.c ^
              src\audio\tone.c src\audio\mixer.c src\audio\sfx_events.c ^

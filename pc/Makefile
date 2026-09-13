@@ -17,7 +17,7 @@ CFLAGS  ?= -std=c99 -Wall -Wextra -O2 -g
 CFLAGS  += -DPONG_BUILD_ID=$(BUILD_ID)
 ROOT    := ..
 MBEDTLS := $(ROOT)/pc/vendor/mbedtls
-INC     := -I$(MBEDTLS)/include -I$(ROOT)/src -I$(ROOT)/src/sim -I$(ROOT)/src/audio -I$(ROOT)/src/gfx -I$(ROOT)/src/ui -I$(ROOT)/3ds/source/game -I$(ROOT)/3ds/source/net
+INC     := -I$(MBEDTLS)/include -I$(ROOT)/3ds/source/util -I$(ROOT)/src -I$(ROOT)/src/sim -I$(ROOT)/src/audio -I$(ROOT)/src/gfx -I$(ROOT)/src/ui -I$(ROOT)/3ds/source/game -I$(ROOT)/3ds/source/net
 # Find SDL3 without requiring PKG_CONFIG_PATH to be set by hand. Homebrew
 # keeps sdl3.pc under its own opt prefix, which pkg-config does not search by
 # default, and "install it and it still does not build" is a poor first
@@ -51,7 +51,8 @@ ifeq ($(strip $(SDL)),)
   endif
 endif
 
-SRC := main_sdl.c net_pc.c lanshape.c https_pc.c net_https_pc.c \
+SRC := main_sdl.c net_pc.c https_pc.c net_https_pc.c \
+       $(ROOT)/3ds/source/util/addr.c \
        $(ROOT)/src/audio/tone.c \
        $(ROOT)/src/audio/mixer.c \
        $(ROOT)/src/audio/sfx_events.c \
