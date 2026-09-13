@@ -17,6 +17,12 @@ static C3D_RenderTarget *s_target[PONG_SURFACE_COUNT];
 static C2D_TextBuf s_buf;          /* cleared every frame */
 static bool s_ready = false;
 
+/* A console is its screen: there is no window to grow, so the menu leaves the
+ * row out rather than showing a toggle that does nothing. */
+bool pong_gfx_fullscreen_supported(void) { return false; }
+bool pong_gfx_fullscreen_get(void) { return true; }
+void pong_gfx_fullscreen_set(bool on) { (void)on; }
+
 const char *pong_gfx_platform_name(void) { return "3ds"; }
 
 bool pong_gfx_text_input(bool enabled)

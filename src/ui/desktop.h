@@ -35,9 +35,40 @@ typedef enum {
     DESK_ITEM_BOT,
     DESK_ITEM_SERVER,
     DESK_ITEM_NAME,
+    DESK_ITEM_FULLSCREEN,
     DESK_ITEM_QUIT,
     DESK_ITEM_COUNT
 } DeskItem;
+
+/*
+ * Not every item exists on every platform, so the menu is addressed two ways.
+ *
+ * `DeskItem` is the identity -- what a row MEANS -- and is what `sel` holds and
+ * what callers compare against. The visible ROW is where it sits on screen, and
+ * a hidden item has none. Keeping them apart is what lets the Vita drop the
+ * fullscreen row without renumbering everything after it, and without a caller
+ * having to know the row it is looking at is not the item it wants.
+ */
+
+/** Whether this platform offers the item at all. */
+bool pong_desk_item_shown(DeskItem it);
+
+/** Rows actually drawn. */
+int pong_desk_rows(void);
+
+/** Screen row for an item, or -1 when the platform does not offer it. */
+int pong_desk_row_of(DeskItem it);
+
+/** The item at a screen row, or DESK_ITEM_COUNT when the row is past the end. */
+DeskItem pong_desk_item_of_row(int row);
+
+/**
+ * The next shown item in `dir` (+1 down, -1 up), wrapping.
+ *
+ * Menu movement goes through here so that a hidden row cannot be landed on,
+ * which is the failure mode of skipping it only in the drawing code.
+ */
+DeskItem pong_desk_step(DeskItem cur, int dir);
 
 typedef struct {
     DeskScreen  screen;

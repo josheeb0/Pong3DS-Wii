@@ -42,6 +42,12 @@ static PongSurface s_current = PONG_SURFACE_TOP;
 static vita2d_texture *s_font;
 static bool s_ready = false;
 
+/* A console is its screen: there is no window to grow, so the menu leaves the
+ * row out rather than showing a toggle that does nothing. */
+bool pong_gfx_fullscreen_supported(void) { return false; }
+bool pong_gfx_fullscreen_get(void) { return true; }
+void pong_gfx_fullscreen_set(bool on) { (void)on; }
+
 const char *pong_gfx_platform_name(void) { return "vita"; }
 
 static inline float vx(float x) { return s_vp[s_current].x + x * s_vp[s_current].scale; }

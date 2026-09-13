@@ -152,6 +152,22 @@ void pong_gfx_text_size(const char *s, float scale, float *w, float *h);
  * literal until there was more than one answer. Belongs to the backend because
  * the backend is the only thing that knows.
  */
+/**
+ * Fullscreen, on the platforms that have a concept of it.
+ *
+ * A console IS its screen. The 3DS and the Vita have nothing to toggle, so
+ * they report false here and the menu drops the row entirely rather than
+ * offering a control that cannot do anything -- an option that visibly does
+ * nothing is worse than no option.
+ */
+bool pong_gfx_fullscreen_supported(void);
+
+/** True when the window is currently fullscreen. False where unsupported. */
+bool pong_gfx_fullscreen_get(void);
+
+/** No-op where unsupported, so callers need not guard every use. */
+void pong_gfx_fullscreen_set(bool on);
+
 const char *pong_gfx_platform_name(void);
 
 /**

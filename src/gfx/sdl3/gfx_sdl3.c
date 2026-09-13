@@ -37,6 +37,32 @@ typedef struct { float x, y, w, h, scale; } Viewport;
 static Viewport s_vp[PONG_SURFACE_COUNT];
 static PongSurface s_current = PONG_SURFACE_TOP;
 
+bool pong_gfx_fullscreen_supported(void) { return true; }
+
+bool pong_gfx_fullscreen_get(void)
+{
+    if (!s_win) return false;
+    return (SDL_GetWindowFlags(s_win) & SDL_WINDOW_FULLSCREEN) != 0;
+}
+
+void pong_gfx_fullscreen_set(bool on)
+{
+    if (!s_win) return;
+
+    /* Borderless desktop fullscreen, not a videomode change: the window keeps
+     * the desktop resolution, so the menu re-lays-out against the new output
+     * size on the next frame and nothing has to be reloaded. A real mode switch
+     * would also be slower to leave, which matters for something bound to a
+     * key people press by accident. */
+    SDL_SetWindowFullscreen(s_win, on);
+
+    /* The size the UI lays out against comes from the renderer's output, which
+     * does not update until the window manager has actually applied the change.
+     * Syncing here keeps the first frame after a toggle from being drawn to the
+     * old dimensions. */
+    SDL_SyncWindow(s_win);
+}
+
 const char *pong_gfx_platform_name(void) { return "pc"; }
 
 /* Surface coords -> window coords. */

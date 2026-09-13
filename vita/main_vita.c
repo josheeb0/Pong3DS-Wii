@@ -420,9 +420,9 @@ int main(void)
 
             if (app.hud.screen == DESK_MENU) {
                 if (pressed & SCE_CTRL_DOWN)
-                    app.hud.sel = (app.hud.sel + 1) % DESK_ITEM_COUNT;
+                    app.hud.sel = pong_desk_step(app.hud.sel, +1);
                 if (pressed & SCE_CTRL_UP)
-                    app.hud.sel = (app.hud.sel + DESK_ITEM_COUNT - 1) % DESK_ITEM_COUNT;
+                    app.hud.sel = pong_desk_step(app.hud.sel, -1);
                 if (pressed & SCE_CTRL_CROSS) activate(&app, &running);
             } else {
                 if (pressed & SCE_CTRL_CIRCLE) leave_match(&app);

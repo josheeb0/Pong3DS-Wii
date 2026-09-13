@@ -31,6 +31,22 @@
 #define CLR_ACCENT    pong_rgba(0x7e, 0xe7, 0xff, 0xFF)
 #define CLR_EDGE      pong_rgba(0x1a, 0x2b, 0x38, 0xFF)
 #define CLR_PANEL     pong_rgba(0x0d, 0x13, 0x1b, 0xEE)
+#define CLR_ACCENT2   pong_rgba(0xff, 0x9d, 0xe2, 0xFF)
+#define CLR_HEADER    pong_rgba(0x0a, 0x12, 0x19, 0xFF)
+/* Deliberately NOT opaque. On the handheld the attract match has a screen of
+ * its own; here it shares one with the menu, and fully opaque rows would cover
+ * the middle of the field so that only the two paddles peeked out at the edges
+ * -- which reads as stray bars, not a game. At this alpha the ball is visible
+ * crossing behind the rows. */
+#define CLR_BTN       pong_rgba(0x0e, 0x16, 0x1e, 0xE8)
+#define CLR_BTN_SEL   pong_rgba(0x16, 0x2c, 0x3a, 0xEE)
+/* The ghost match behind the menu. Dim enough to sit under text without
+ * competing with it -- the handheld's version is the thing that made that
+ * screen feel alive, and it is what this one was missing. */
+#define CLR_GHOST_NET  pong_rgba(0x15, 0x22, 0x2e, 0xFF)
+#define CLR_GHOST_L    pong_rgba(0x1b, 0x33, 0x44, 0xFF)
+#define CLR_GHOST_R    pong_rgba(0x38, 0x24, 0x40, 0xFF)
+#define CLR_GHOST_BALL pong_rgba(0x35, 0x4d, 0x60, 0xFF)
 
 static PongColor mix(PongColor a, PongColor b, float t)
 {
@@ -96,6 +112,7 @@ static const DeskLabel ITEM[DESK_ITEM_COUNT] = {
     [DESK_ITEM_BOT]    = { "VS CPU",      "practice against the server bot" },
     [DESK_ITEM_SERVER] = { "SERVER",      "where to connect" },
     [DESK_ITEM_NAME]   = { "NAME",        "what the other player sees" },
+    [DESK_ITEM_FULLSCREEN] = { "FULLSCREEN", "fill the whole display" },
     [DESK_ITEM_QUIT]   = { "QUIT",        NULL },
 };
 
@@ -118,12 +135,59 @@ static float title_block_h(int out_h)
     return (float)out_h * 0.06f + t * 24.0f + 30.0f + 22.0f + 24.0f;
 }
 
+bool pong_desk_item_shown(DeskItem it)
+{
+    /* The only item that is not universal. A console has no window to grow. */
+    if (it == DESK_ITEM_FULLSCREEN) return pong_gfx_fullscreen_supported();
+    return true;
+}
+
+int pong_desk_rows(void)
+{
+    int n = 0;
+    for (int i = 0; i < DESK_ITEM_COUNT; i++)
+        if (pong_desk_item_shown((DeskItem)i)) n++;
+    return n;
+}
+
+int pong_desk_row_of(DeskItem it)
+{
+    if (!pong_desk_item_shown(it)) return -1;
+    int row = 0;
+    for (int i = 0; i < (int)it; i++)
+        if (pong_desk_item_shown((DeskItem)i)) row++;
+    return row;
+}
+
+DeskItem pong_desk_item_of_row(int row)
+{
+    for (int i = 0; i < DESK_ITEM_COUNT; i++) {
+        if (!pong_desk_item_shown((DeskItem)i)) continue;
+        if (row-- == 0) return (DeskItem)i;
+    }
+    return DESK_ITEM_COUNT;
+}
+
+DeskItem pong_desk_step(DeskItem cur, int dir)
+{
+    if (dir == 0) return cur;
+    int i = (int)cur;
+    /* Bounded by the item count: without that, a platform showing nothing --
+     * which cannot happen today but is one edit away -- would spin here. */
+    for (int guard = 0; guard < DESK_ITEM_COUNT; guard++) {
+        i = (i + (dir > 0 ? 1 : DESK_ITEM_COUNT - 1)) % DESK_ITEM_COUNT;
+        if (pong_desk_item_shown((DeskItem)i)) return (DeskItem)i;
+    }
+    return cur;
+}
+
 /** Row height, shrunk to fit rather than overflowing. */
 static float menu_row_h(int out_h)
 {
     const float gap = 8.0f;
     float avail = (float)out_h - title_block_h(out_h) - 72.0f;  /* 72: hint line */
-    float rh = (avail - (DESK_ITEM_COUNT - 1) * gap) / (float)DESK_ITEM_COUNT;
+    const int rows = pong_desk_rows();
+    float rh = (avail - (rows - 1) * gap) / (float)rows;
     if (rh > 52.0f) rh = 52.0f;
     if (rh < 34.0f) rh = 34.0f;      /* below this the two lines stop fitting */
     return rh;
@@ -137,7 +201,8 @@ static void menu_row(int out_w, int out_h, int i, float *x, float *y, float *w, 
 
     const float gap = 8.0f;
     const float rh = menu_row_h(out_h);
-    const float total = DESK_ITEM_COUNT * rh + (DESK_ITEM_COUNT - 1) * gap;
+    const int rows = pong_desk_rows();
+    const float total = rows * rh + (rows - 1) * gap;
 
     /*
      * Measured DOWN from the title rather than up from the bottom.
@@ -151,8 +216,14 @@ static void menu_row(int out_w, int out_h, int i, float *x, float *y, float *w, 
     float slack = ((float)out_h - 72.0f) - (start + total);
     if (slack > 0.0f) start += slack * 0.5f;      /* centre in what is left */
 
+    /* Positioned by visible row, not by item index: on a platform that hides
+     * an item the two diverge, and using the index would leave a hole where the
+     * hidden row would have been. */
+    int row = pong_desk_row_of((DeskItem)i);
+    if (row < 0) row = 0;
+
     *x = ((float)out_w - rw) * 0.5f;
-    *y = start + (float)i * (rh + gap);
+    *y = start + (float)row * (rh + gap);
     *w = rw;
     *h = rh;
 }
@@ -160,6 +231,7 @@ static void menu_row(int out_w, int out_h, int i, float *x, float *y, float *w, 
 int pong_desk_item_at(float mx, float my, int out_w, int out_h)
 {
     for (int i = 0; i < DESK_ITEM_COUNT; i++) {
+        if (!pong_desk_item_shown((DeskItem)i)) continue;
         float x, y, w, h;
         menu_row(out_w, out_h, i, &x, &y, &w, &h);
         if (mx >= x && mx <= x + w && my >= y && my <= y + h) return i;
@@ -328,12 +400,78 @@ static void draw_hint(const DeskHud *hud, int out_w, int out_h)
 
 /* ------------------------------------------------------------------ menu */
 
+/*
+ * A ghost match behind the menu.
+ *
+ * Taken from the handheld interface, which plays one behind its own menu. It is
+ * the single thing that made that screen feel alive rather than like a list,
+ * and its absence is why this one looked flat beside it.
+ */
+static void draw_attract(int out_w, int out_h, uint32_t frame)
+{
+    const float w = (float)out_w, h = (float)out_h;
+    const float t = (float)frame;
+
+    /* Two sines of unrelated periods, so the path does not visibly repeat over
+     * the time anyone spends looking at a menu. */
+    const float bx = w * 0.5f + w * 0.38f * sinf(t * 0.013f);
+    const float by = h * 0.5f + h * 0.32f * sinf(t * 0.021f);
+
+    /* The paddles follow LATE. That lag is what makes three moving shapes read
+     * as a rally rather than as three independent animations. */
+    const float ly = h * 0.5f + h * 0.28f * sinf(t * 0.021f - 0.6f);
+    const float ry = h * 0.5f + h * 0.28f * sinf(t * 0.021f - 1.1f);
+
+    const float ph = h * 0.17f, pw = 9.0f;
+
+    const float dash = h / 26.0f;
+    for (float y = 0.0f; y < h; y += dash * 2.0f)
+        pong_gfx_rect(w * 0.5f - 1.0f, y, 2.0f, dash, CLR_GHOST_NET);
+
+    pong_gfx_rect(w * 0.035f, ly - ph * 0.5f, pw, ph, CLR_GHOST_L);
+    pong_gfx_rect(w * 0.965f - pw, ry - ph * 0.5f, pw, ph, CLR_GHOST_R);
+
+    /* Squares, not circles, for the trail: seven circles a frame behind a menu
+     * is not worth the state changes on any of the platforms this shares. */
+    for (int k = 7; k >= 1; k--) {
+        const float tt = t - (float)k * 2.2f;
+        const float tx = w * 0.5f + w * 0.38f * sinf(tt * 0.013f);
+        const float ty = h * 0.5f + h * 0.32f * sinf(tt * 0.021f);
+        const float sz = 5.0f - (float)k * 0.45f;
+        pong_gfx_rect(tx - sz, ty - sz, sz * 2.0f, sz * 2.0f,
+                      mix(CLR_GHOST_BALL, CLR_BG, (float)k / 8.0f));
+    }
+    pong_gfx_circle(bx, by, 6.0f, CLR_GHOST_BALL);
+}
+
+/** The chevron the handheld puts on its active row, pointing at what ENTER does. */
+static void draw_chevron(float cx, float cy)
+{
+    for (int k = 0; k < 7; k++) {
+        pong_gfx_rect(cx + (float)k, cy - 7.0f + (float)k, 2.0f, 3.0f, CLR_ACCENT);
+        pong_gfx_rect(cx + (float)k, cy + 6.0f - (float)k, 2.0f, 3.0f, CLR_ACCENT);
+    }
+}
+
 static void draw_menu(const DeskHud *hud, int out_w, int out_h)
 {
     float cx = (float)out_w * 0.5f;
 
+    draw_attract(out_w, out_h, hud->frame);
+
     const float ts = title_scale(out_h);
     float ty = (float)out_h * 0.06f;
+
+    /* A band under the title, as on the handheld. It gives the title something
+     * to sit on and, more usefully, separates it from the ghost match moving
+     * behind -- without it the drifting ball crosses the wordmark. */
+    {
+        const float hb = title_block_h(out_h) - 10.0f;
+        pong_gfx_rect_grad(0.0f, 0.0f, (float)out_w, hb,
+                           CLR_HEADER, CLR_HEADER, CLR_BG, CLR_BG);
+        pong_gfx_rect(0.0f, hb - 1.0f, (float)out_w, 1.0f,
+                      mix(CLR_ACCENT, CLR_BG, 0.55f));
+    }
     pong_gfx_text(cx, ty, ts, CLR_ACCENT, PONG_ALIGN_CENTER, "PONG");
     ty += ts * 24.0f + 4.0f;
     pong_gfx_text(cx, ty, 0.8f, CLR_TEXT, PONG_ALIGN_CENTER, "M U L T I P L A Y E R");
@@ -351,18 +489,21 @@ static void draw_menu(const DeskHud *hud, int out_w, int out_h)
     }
 
     for (int i = 0; i < DESK_ITEM_COUNT; i++) {
+        if (!pong_desk_item_shown((DeskItem)i)) continue;
         float x, y, w, h;
         menu_row(out_w, out_h, i, &x, &y, &w, &h);
         bool sel = (hud->sel == i);
 
-        pong_gfx_rect(x, y, w, h, sel ? pong_rgba(0x16, 0x2c, 0x3a, 0xFF)
-                                      : pong_rgba(0x0c, 0x12, 0x1a, 0xFF));
+        pong_gfx_rect(x, y, w, h, sel ? CLR_BTN_SEL : CLR_BTN);
         PongColor edge = sel ? CLR_ACCENT : CLR_EDGE;
         pong_gfx_rect(x, y, w, 1.0f, edge);
         pong_gfx_rect(x, y + h - 1.0f, w, 1.0f, edge);
         pong_gfx_rect(x, y, 1.0f, h, edge);
         pong_gfx_rect(x + w - 1.0f, y, 1.0f, h, edge);
-        if (sel) pong_gfx_rect(x, y, 4.0f, h, CLR_ACCENT);
+        if (sel) {
+            pong_gfx_rect(x, y, 4.0f, h, CLR_ACCENT);
+            draw_chevron(x + w - 22.0f, y + h * 0.5f);
+        }
 
         /* Both lines positioned from the row's own height: a 34px row on a
          * handheld and a 52px one in a window should both look deliberate. */
@@ -375,11 +516,15 @@ static void draw_menu(const DeskHud *hud, int out_w, int out_h)
                           sel ? CLR_DIM : CLR_FAINT, PONG_ALIGN_LEFT, ITEM[i].hint);
         }
 
-        /* The two settings rows show their current value on the right, which is
-         * the whole reason to look at them. */
+        /* The settings rows show their current value on the right, which is the
+         * whole reason to look at them. Fullscreen reads its state from the
+         * renderer rather than a copy in the hud: the window can be taken out
+         * of fullscreen by the window manager or by the OS shortcut, and a
+         * cached flag would then disagree with the screen. */
         const char *val = NULL;
         if (i == DESK_ITEM_SERVER) val = hud->server_addr;
         if (i == DESK_ITEM_NAME)   val = hud->my_name;
+        if (i == DESK_ITEM_FULLSCREEN) val = pong_gfx_fullscreen_get() ? "ON" : "OFF";
         if (val && val[0]) {
             pong_gfx_text(x + w - 20.0f, y + h * 0.5f - 8.0f, 0.62f,
                           sel ? CLR_ACCENT : CLR_FAINT, PONG_ALIGN_RIGHT, val);

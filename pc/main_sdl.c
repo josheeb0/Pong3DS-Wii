@@ -333,6 +333,7 @@ static void activate(App *a)
     case DESK_ITEM_ROOM:   open_editor(a, DESK_ITEM_ROOM); break;
     case DESK_ITEM_SERVER: open_editor(a, DESK_ITEM_SERVER); break;
     case DESK_ITEM_NAME:   open_editor(a, DESK_ITEM_NAME); break;
+    case DESK_ITEM_FULLSCREEN: pong_gfx_fullscreen_set(!pong_gfx_fullscreen_get()); break;
     default: break;
     }
 }
@@ -455,6 +456,15 @@ int main(int argc, char **argv)
                 break;
 
             case SDL_EVENT_KEY_DOWN:
+                /* Before the editing check, and before the menu switch: F11 and
+                 * Alt+Enter are what people already press, and they should work
+                 * from anywhere -- mid-rally, or with a text field open, where
+                 * Enter alone means "commit". */
+                if (e.key.key == SDLK_F11 ||
+                    (e.key.key == SDLK_RETURN && (e.key.mod & SDL_KMOD_ALT))) {
+                    pong_gfx_fullscreen_set(!pong_gfx_fullscreen_get());
+                    break;
+                }
                 if (app.editing) {
                     if (e.key.key == SDLK_RETURN) commit_editor(&app);
                     else if (e.key.key == SDLK_ESCAPE) {
@@ -473,11 +483,11 @@ int main(int argc, char **argv)
                     break;
                 case SDLK_UP:
                     if (app.hud.screen == DESK_MENU)
-                        app.hud.sel = (app.hud.sel + DESK_ITEM_COUNT - 1) % DESK_ITEM_COUNT;
+                        app.hud.sel = pong_desk_step(app.hud.sel, -1);
                     break;
                 case SDLK_DOWN:
                     if (app.hud.screen == DESK_MENU)
-                        app.hud.sel = (app.hud.sel + 1) % DESK_ITEM_COUNT;
+                        app.hud.sel = pong_desk_step(app.hud.sel, +1);
                     break;
                 case SDLK_RETURN:
                     if (app.hud.screen == DESK_MENU) {
@@ -496,11 +506,11 @@ int main(int argc, char **argv)
                 switch (e.gbutton.button) {
                 case SDL_GAMEPAD_BUTTON_DPAD_UP:
                     if (app.hud.screen == DESK_MENU)
-                        app.hud.sel = (app.hud.sel + DESK_ITEM_COUNT - 1) % DESK_ITEM_COUNT;
+                        app.hud.sel = pong_desk_step(app.hud.sel, -1);
                     break;
                 case SDL_GAMEPAD_BUTTON_DPAD_DOWN:
                     if (app.hud.screen == DESK_MENU)
-                        app.hud.sel = (app.hud.sel + 1) % DESK_ITEM_COUNT;
+                        app.hud.sel = pong_desk_step(app.hud.sel, +1);
                     break;
                 case SDL_GAMEPAD_BUTTON_SOUTH:    /* cross */
                     if (app.hud.screen == DESK_MENU) {
