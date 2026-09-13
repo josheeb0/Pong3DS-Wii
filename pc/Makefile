@@ -42,7 +42,7 @@ ifeq ($(strip $(SDL)),)
 $(error SDL3 not found. macOS: brew install sdl3 - Debian/Ubuntu: apt install libsdl3-dev)
 endif
 
-SRC := main_sdl.c net_pc.c \
+SRC := main_sdl.c net_pc.c lanshape.c \
        $(ROOT)/src/gfx/sdl3/gfx_sdl3.c \
        $(ROOT)/src/ui/desktop.c \
        $(ROOT)/3ds/source/net/pong_proto.c \
