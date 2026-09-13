@@ -46,7 +46,16 @@ typedef enum {
  * `verify` off is for a LAN box with a self-signed certificate and nothing
  * else; it is never the default and the caller has to ask for it.
  */
-PongHttps *pong_https_open(const char *host, uint16_t port, bool verify,
+/**
+ * `tls` false speaks plain HTTP on the same code path.
+ *
+ * Not a hedge: a server you host yourself on a spare port very often has no
+ * certificate, and the address bar already says which you meant -- http:// or
+ * a bare host:port is plaintext, https:// or a bare hostname is TLS. Refusing
+ * plaintext would mean the client could reach the one deployment behind a
+ * tunnel and nothing anyone stood up themselves.
+ */
+PongHttps *pong_https_open(const char *host, uint16_t port, bool tls, bool verify,
                            char *err, size_t errcap);
 
 void pong_https_close(PongHttps *h);

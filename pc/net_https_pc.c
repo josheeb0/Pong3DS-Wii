@@ -50,6 +50,7 @@ struct PongNetHttps {
     PongHttps *h;
     char host[128];
     uint16_t port;
+    bool tls;
     bool verify;
 
     uint8_t out[OUT_MAX];
@@ -88,7 +89,8 @@ static uint32_t now_ms(void)
 #endif
 }
 
-PongNetHttps *pong_https_net_connect(const char *host, uint16_t port, bool verify,
+PongNetHttps *pong_https_net_connect(const char *host, uint16_t port,
+                                     bool tls, bool verify,
                                      char *err, size_t errcap)
 {
     PongNetHttps *n = (PongNetHttps *)calloc(1, sizeof *n);
@@ -96,9 +98,10 @@ PongNetHttps *pong_https_net_connect(const char *host, uint16_t port, bool verif
 
     snprintf(n->host, sizeof n->host, "%s", host);
     n->port = port;
+    n->tls = tls;
     n->verify = verify;
 
-    n->h = pong_https_open(host, port, verify, err, errcap);
+    n->h = pong_https_open(host, port, tls, verify, err, errcap);
     if (!n->h) { free(n); return NULL; }
 
     /* The session POST returns WELCOME in its body, which the caller is about
@@ -200,7 +203,7 @@ int pong_https_net_recv(PongNetHttps *n, uint8_t *buf, size_t cap)
     if (rc != PONG_HTTPS_OK && connection_died) {
         char err[192] = "";
         pong_https_close(n->h);
-        n->h = pong_https_open(n->host, n->port, n->verify, err, sizeof err);
+        n->h = pong_https_open(n->host, n->port, n->tls, n->verify, err, sizeof err);
         if (!n->h) {
             /* Bounded: the open() message can be longer than this buffer. */
             snprintf(n->err, sizeof n->err, "reconnect failed: %.150s", err);

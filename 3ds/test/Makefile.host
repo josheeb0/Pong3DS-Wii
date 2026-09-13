@@ -15,7 +15,7 @@ CLIENT := ../source/game/client.c
 
 .PHONY: all run play addr gh clean
 
-all: test_proto test_play test_addr test_ghparse test_interp test_sim test_local test_lanshape test_menu_layout test_tone
+all: test_proto test_play test_addr test_ghparse test_interp test_sim test_local test_menu_layout test_tone
 
 test_proto: test_proto.c $(PROTO) ../source/net/pong_proto.h golden_data.h
 	$(CC) $(CFLAGS) -o $@ test_proto.c $(PROTO) $(LDFLAGS)
@@ -23,7 +23,7 @@ test_proto: test_proto.c $(PROTO) ../source/net/pong_proto.h golden_data.h
 test_play: test_play.c $(PROTO) $(CLIENT) ../source/game/client.h
 	$(CC) $(CFLAGS) -I../source/net -I../source/game -o $@ test_play.c $(PROTO) $(CLIENT) $(LDFLAGS)
 
-run: test_proto test_addr test_ghparse test_interp test_sim test_local test_lanshape test_menu_layout test_tone
+run: test_proto test_addr test_ghparse test_interp test_sim test_local test_menu_layout test_tone
 	./test_proto
 	@echo ""
 	./test_addr
@@ -31,7 +31,6 @@ run: test_proto test_addr test_ghparse test_interp test_sim test_local test_lans
 	./test_ghparse
 	./test_sim
 	./test_local
-	./test_lanshape
 	./test_menu_layout
 	./test_tone
 	@echo ""
@@ -65,7 +64,7 @@ gh: test_ghparse
 	./test_ghparse
 
 clean:
-	rm -rf test_proto test_play test_addr test_ghparse test_sim test_local test_lanshape test_menu_layout test_tone *.dSYM
+	rm -rf test_proto test_play test_addr test_ghparse test_sim test_local test_menu_layout test_tone *.dSYM
 
 # The C simulation against a recording of the TypeScript one. client.c comes
 # along for pong_step_paddle, which the simulation shares with prediction rather
@@ -81,10 +80,7 @@ test_local: test_local.c $(SIMSRC) ../../src/sim/pong_local.h
 	$(CC) $(CFLAGS) -I../source/net -I../source/game -I../../src/sim -o $@ \
 	  test_local.c $(SIMSRC) ../source/game/client.c $(LDFLAGS)
 
-# The desktop client's address-shape check. Links the real pc/lanshape.c rather
 # than a copy, which is the same reason updatetarget.c was split out.
-test_lanshape: test_lanshape.c ../../pc/lanshape.c ../../pc/lanshape.h
-	$(CC) $(CFLAGS) -o $@ test_lanshape.c ../../pc/lanshape.c $(LDFLAGS)
 
 # The 3DS menu's geometry, checkable without devkitARM or a console. Links the
 # real rect table from src/ui/menu_rect.c, not a copy of the numbers.

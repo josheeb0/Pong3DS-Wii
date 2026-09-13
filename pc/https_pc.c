@@ -38,6 +38,7 @@ struct PongHttps {
     mbedtls_x509_crt         ca;
     char host[128];
     char session[80];
+    bool tls;
     bool open;
 };
 
@@ -68,7 +69,7 @@ static bool load_ca(mbedtls_x509_crt *ca)
     return false;
 }
 
-PongHttps *pong_https_open(const char *host, uint16_t port, bool verify,
+PongHttps *pong_https_open(const char *host, uint16_t port, bool tls, bool verify,
                            char *err, size_t errcap)
 {
     PongHttps *h = (PongHttps *)calloc(1, sizeof *h);
@@ -82,6 +83,7 @@ PongHttps *pong_https_open(const char *host, uint16_t port, bool verify,
     mbedtls_x509_crt_init(&h->ca);
 
     snprintf(h->host, sizeof h->host, "%s", host);
+    h->tls = tls;
 
     static const char pers[] = "pong-pc";
     if (mbedtls_ctr_drbg_seed(&h->drbg, mbedtls_entropy_func, &h->entropy,
@@ -91,8 +93,8 @@ PongHttps *pong_https_open(const char *host, uint16_t port, bool verify,
         return NULL;
     }
 
-    bool have_ca = load_ca(&h->ca);
-    if (verify && !have_ca) {
+    bool have_ca = tls ? load_ca(&h->ca) : false;
+    if (tls && verify && !have_ca) {
         /* Refuse rather than quietly stop verifying. Falling back to an
          * unverified connection because the trust store was missing is how a
          * client ends up trusting anything at all without ever saying so. */
@@ -108,6 +110,13 @@ PongHttps *pong_https_open(const char *host, uint16_t port, bool verify,
         snprintf(err, errcap, "cannot reach %s:%u", host, (unsigned)port);
         pong_https_close(h);
         return NULL;
+    }
+
+    if (!tls) {
+        /* The socket is connected and that is all a plaintext exchange needs.
+         * Everything below sets up a TLS session that will not be used. */
+        h->open = true;
+        return h;
     }
 
     mbedtls_ssl_config_defaults(&h->conf, MBEDTLS_SSL_IS_CLIENT,
@@ -155,7 +164,7 @@ PongHttps *pong_https_open(const char *host, uint16_t port, bool verify,
 void pong_https_close(PongHttps *h)
 {
     if (!h) return;
-    if (h->open) mbedtls_ssl_close_notify(&h->ssl);
+    if (h->open && h->tls) mbedtls_ssl_close_notify(&h->ssl);
     mbedtls_x509_crt_free(&h->ca);
     mbedtls_ssl_free(&h->ssl);
     mbedtls_ssl_config_free(&h->conf);
@@ -171,6 +180,11 @@ const char *pong_https_session(const PongHttps *h) { return h ? h->session : "";
 
 static int read_some(PongHttps *h, uint8_t *buf, size_t cap)
 {
+    if (!h->tls) {
+        int n = mbedtls_net_recv(&h->net, buf, cap);
+        if (n <= 0) { h->open = false; return n == 0 ? 0 : -1; }
+        return n;
+    }
     for (;;) {
         int n = mbedtls_ssl_read(&h->ssl, buf, cap);
         if (n == MBEDTLS_ERR_SSL_WANT_READ || n == MBEDTLS_ERR_SSL_WANT_WRITE) continue;
@@ -182,6 +196,15 @@ static int read_some(PongHttps *h, uint8_t *buf, size_t cap)
 
 static int write_all(PongHttps *h, const uint8_t *buf, size_t len)
 {
+    if (!h->tls) {
+        size_t sent = 0;
+        while (sent < len) {
+            int n = mbedtls_net_send(&h->net, buf + sent, len - sent);
+            if (n <= 0) { h->open = false; return -1; }
+            sent += (size_t)n;
+        }
+        return 0;
+    }
     size_t sent = 0;
     while (sent < len) {
         int n = mbedtls_ssl_write(&h->ssl, buf + sent, len - sent);
