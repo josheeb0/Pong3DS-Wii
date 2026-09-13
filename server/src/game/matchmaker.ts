@@ -125,8 +125,54 @@ export class Matchmaker {
     return -1;
   }
 
-  /** Called on the housekeeping tick: offers bots and prunes dead entries. */
+  /**
+   * Pairs everyone in the queue who is now eligible.
+   *
+   * Walks from the front so the longest-waiting player is served first, which
+   * is also the one most likely to have cleared the window.
+   */
+  private pairWaiting(nowMs: number): void {
+    for (let i = 0; i < this.queue.length; i++) {
+      const w = this.queue[i] as Waiting;
+      if (!w || w.session.isClosed) continue;
+
+      const j = this.pickOpponent(w.session, nowMs);
+      if (j < 0) continue;
+
+      // Remove the higher index first, or removing the lower one shifts the
+      // other and the wrong entry comes out.
+      const hi = Math.max(i, j);
+      const lo = Math.min(i, j);
+      const second = this.queue.splice(hi, 1)[0] as Waiting;
+      const first = this.queue.splice(lo, 1)[0] as Waiting;
+
+      const room = new Room(this.makeCode(), nowMs, this.nextSeed());
+      this.rooms.set(room.code, room);
+      room.seat(first.session);
+      room.seat(second.session);
+      room.start();
+
+      i--;   // the queue shrank under us
+    }
+  }
+
+  /**
+   * Housekeeping: pairs who can now be paired, offers bots, prunes the dead.
+   *
+   * The pairing pass is here because pickOpponent used to be consulted only
+   * when someone JOINED. A same-platform pair is deliberately held back for
+   * CROSS_PLATFORM_WINDOW_MS -- but nothing ever revisited the decision, so two
+   * clients of the same platform that queued within that window were each
+   * refused once and then left in the queue indefinitely, until the bot timer
+   * rescued them separately.
+   *
+   * Reported as two desktops that would each pair with a 3DS instantly and
+   * never with each other, which is exactly the shape of "only reconsidered on
+   * arrival".
+   */
   tick(nowMs: number): void {
+    this.pairWaiting(nowMs);
+
     for (let i = this.queue.length - 1; i >= 0; i--) {
       const w = this.queue[i] as Waiting;
       if (w.session.isClosed) {
