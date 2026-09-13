@@ -36,4 +36,16 @@ bool pong_gh_first_name(const char *json, char *out, size_t cap);
  */
 uint32_t pong_gh_build_number(const char *name, const char *tag);
 
+/**
+ * The highest build number across every release in the document, and the tag
+ * that carries it. Returns 0 when the document holds no usable release.
+ *
+ * Use this rather than reading the first release: GitHub does not return the
+ * list newest-first. A newly published build-110 was served at position seven,
+ * behind a build-87 four hours older, while position one stayed on the newest
+ * non-prerelease -- so a console reading only the first entry never sees a new
+ * build at all.
+ */
+uint32_t pong_gh_best_release(const char *json, char *out_tag, size_t cap);
+
 #endif /* PONG_GHPARSE_H */

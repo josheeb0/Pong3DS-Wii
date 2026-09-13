@@ -181,6 +181,70 @@ int main(void)
               "keys do not match inside each other", d);
     }
 
+    printf("\n=== the list is not in the order we need ===\n");
+    {
+        /*
+         * The ordering GitHub actually served, recorded from the live API on
+         * the day a console reported itself up to date on build 93:
+         *
+         *   1 v1.1.1    created 03:39   <- the only entry a per_page=1 sees
+         *   2 v1.1.0    created 03:09
+         *   3 build-93  created 00:58
+         *   4 build-91  created 00:51
+         *   5 build-87  created 00:31
+         *   6 build-110 created 03:55   <- the newest build, seven places down
+         *
+         * Position one is the newest NON-prerelease and stays there; every
+         * per-commit build is a prerelease and never reaches it. So reading the
+         * first entry does not mean reading the newest release, and no number
+         * of new builds would ever have changed what that console saw.
+         */
+        static const char out_of_order[] =
+            "[{\"tag_name\":\"v1.1.1\",\"name\":\"Pong3DS v1.1.1\",\"prerelease\":false},"
+            "{\"tag_name\":\"v1.1.0\",\"name\":\"Pong3DS v1.1.0\",\"prerelease\":false},"
+            "{\"tag_name\":\"build-93\",\"name\":\"Build 93\",\"prerelease\":true},"
+            "{\"tag_name\":\"build-91\",\"name\":\"Build 91\",\"prerelease\":true},"
+            "{\"tag_name\":\"build-87\",\"name\":\"Build 87\",\"prerelease\":true},"
+            "{\"tag_name\":\"build-110\",\"name\":\"Build 110\",\"prerelease\":true}]";
+
+        char first[64] = {0};
+        pong_gh_first_tag(out_of_order, first, sizeof first);
+        check(strcmp(first, "v1.1.1") == 0, "first entry is NOT the newest", first);
+
+        char tag[64] = {0};
+        uint32_t best = pong_gh_best_release(out_of_order, tag, sizeof tag);
+        char d[96];
+        snprintf(d, sizeof d, "%u via %s", best, tag);
+        check(best == 110, "the whole page is searched", d);
+        check(strcmp(tag, "build-110") == 0, "and the winner's tag comes back", tag);
+        check(best > 93, "a console on build 93 now sees an update", NULL);
+
+        /* The download URL is built from that tag, so picking the right build
+         * and then fetching a different one would be its own quiet failure. */
+        char dsx[160];
+        snprintf(dsx, sizeof dsx,
+                 "https://github.com/o/r/releases/download/%s/pong3ds.3dsx", tag);
+        check(strstr(dsx, "/build-110/") != NULL, "and the download follows it", NULL);
+
+        /* A release whose name is null must not borrow the next release's
+         * name, or an asset filename, across the object boundary. */
+        static const char null_name[] =
+            "[{\"tag_name\":\"build-5\",\"name\":null,"
+              "\"assets\":[{\"name\":\"pong3ds.3dsx\"}]},"
+            "{\"tag_name\":\"build-4\",\"name\":\"Build 4\"}]";
+        tag[0] = '\0';
+        uint32_t b2 = pong_gh_best_release(null_name, tag, sizeof tag);
+        snprintf(d, sizeof d, "%u via %s", b2, tag);
+        check(b2 == 5 && strcmp(tag, "build-5") == 0,
+              "a null name falls back to its own tag", d);
+
+        /* Nothing usable must report nothing, not a stray number. */
+        char t3[64] = {0};
+        check(pong_gh_best_release("[]", t3, sizeof t3) == 0, "empty list yields 0", NULL);
+        check(pong_gh_best_release("{\"message\":\"Not Found\"}", t3, sizeof t3) == 0,
+              "an error body yields 0", NULL);
+    }
+
     printf("\n=== update target presets ===\n");
     {
         /* The upstream must be first: it is the shipped default, and a default

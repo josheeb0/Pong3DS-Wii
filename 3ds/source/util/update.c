@@ -37,7 +37,13 @@
 
 #define MANIFEST_MAX 512
 #define DOWNLOAD_MAX (2 * 1024 * 1024)   /* the .3dsx is ~420KB; 2MB is slack */
-#define GH_JSON_MAX  (24 * 1024)
+/* A page of releases, not one. GitHub does not return them newest-first -- a
+ * freshly published build-110 came back at position seven -- so the page has to
+ * be wide enough to contain the newest build wherever it lands. Twenty covers
+ * the worst ordering seen by a wide margin; the real response for twenty is
+ * ~230KB, and the buffer leaves room for the assets to grow. */
+#define GH_RELEASES_PER_PAGE 20
+#define GH_JSON_MAX  (320 * 1024)
 
 /* Checks GitHub Releases directly, so an un-redeployed server cannot hide a
  * newer build. */
@@ -52,7 +58,8 @@ static PongUpdateResult check_github(const PongNetConfig *net, uint32_t local_bu
 
     char url[256];
     snprintf(url, sizeof url,
-             "https://api.github.com/repos/%s/%s/releases?per_page=1", owner, repo);
+             "https://api.github.com/repos/%s/%s/releases?per_page=%d",
+             owner, repo, GH_RELEASES_PER_PAGE);
 
     static uint8_t body[GH_JSON_MAX];
     HttpsResponse resp;
@@ -67,23 +74,27 @@ static PongUpdateResult check_github(const PongNetConfig *net, uint32_t local_bu
 
     body[resp.body_len] = '\0';
 
+    /* The whole page is read and the largest build number wins, because the
+     * order GitHub returns is not the order we need and reading only the first
+     * entry is how a console sat on build 93 announcing it was current. */
     char tag[64];
-    char rel_name[96] = "";
-    pong_gh_first_name((const char *)body, rel_name, sizeof rel_name);
+    uint32_t best = pong_gh_best_release((const char *)body, tag, sizeof tag);
 
-    if (!pong_gh_first_tag((const char *)body, tag, sizeof tag)) {
-        /* An empty repository is a normal state, not a fault -- say so, and say
-         * what to do, rather than reporting it like a network error. */
-        snprintf(out->message, sizeof out->message,
-                 "%s/%s has no releases yet - press SOURCE to pick another",
-                 owner, repo);
+    if (best == 0) {
+        /* Both of these are normal states rather than faults, and they need
+         * different answers, so say which one it is. */
+        if (!pong_gh_first_tag((const char *)body, tag, sizeof tag)) {
+            snprintf(out->message, sizeof out->message,
+                     "%s/%s has no releases yet - press SOURCE to pick another",
+                     owner, repo);
+        } else {
+            snprintf(out->message, sizeof out->message,
+                     "%s/%s: no release names a build number", owner, repo);
+        }
         return PONG_UPDATE_ERROR;
     }
 
-    /* From the name where it says one, because a version tag cannot carry a
-     * build number -- v1.1.1 reads as 1, which is how a console on build 93
-     * came to report itself up to date while two releases behind. */
-    out->remote_build = pong_gh_build_number(rel_name, tag);
+    out->remote_build = best;
     out->remote_protocol = 0;   /* GitHub does not know the protocol version */
 
     snprintf(out->release_url, sizeof out->release_url,

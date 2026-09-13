@@ -17,9 +17,9 @@
  * on it: the six release assets each have a "name", and only the release's own
  * name coming first in the document keeps an asset filename out of the answer.
  */
-static bool first_string(const char *json, const char *key, char *out, size_t cap)
+static const char *find_string(const char *json, const char *key, char *out, size_t cap)
 {
-    if (!json || !key || !out || cap == 0) return false;
+    if (!json || !key || !out || cap == 0) return NULL;
 
     const size_t klen = strlen(key);
     for (const char *k = strstr(json, key); k; k = strstr(k + 1, key)) {
@@ -43,16 +43,21 @@ static bool first_string(const char *json, const char *key, char *out, size_t ca
         p++;
 
         const char *end = strchr(p, '"');
-        if (!end) return false;
+        if (!end) return NULL;
 
         size_t len = (size_t)(end - p);
-        if (len == 0 || len >= cap) return false;
+        if (len == 0 || len >= cap) return NULL;
 
         memcpy(out, p, len);
         out[len] = '\0';
-        return true;
+        return end + 1;     /* the cursor, so callers can walk the document */
     }
-    return false;
+    return NULL;
+}
+
+static bool first_string(const char *json, const char *key, char *out, size_t cap)
+{
+    return find_string(json, key, out, cap) != NULL;
 }
 
 bool pong_gh_first_tag(const char *json, char *out, size_t cap)
@@ -108,4 +113,49 @@ uint32_t pong_gh_build_from_tag(const char *tag)
     if (!*p) return 0;
     long v = strtol(p, NULL, 10);
     return v > 0 ? (uint32_t)v : 0;
+}
+
+/*
+ * The highest build number in the document, and the tag that carries it.
+ *
+ * Reading only the first release looked obviously correct and was not. GitHub
+ * does not return this list newest-first: a freshly cut build-110 was served at
+ * position SEVEN, behind a build-87 four hours older, while position one stayed
+ * on the newest non-prerelease. A console asking for per_page=1 therefore saw
+ * the same release forever and reported itself up to date no matter how many
+ * builds were published.
+ *
+ * So the order is not trusted at all -- every release in the page is read and
+ * the largest build number wins. That is the question actually being asked.
+ */
+uint32_t pong_gh_best_release(const char *json, char *out_tag, size_t cap)
+{
+    if (!json || !out_tag || cap == 0) return 0;
+    out_tag[0] = '\0';
+
+    uint32_t best = 0;
+    const char *p = json;
+
+    while (p && *p) {
+        char tag[64];
+        const char *after_tag = find_string(p, "\"tag_name\"", tag, sizeof tag);
+        if (!after_tag) break;
+
+        /* The next release's tag bounds this one. Without that bound a release
+         * with a null name would silently adopt the name of whatever came
+         * next -- an asset filename, or the following release. */
+        const char *next = strstr(after_tag, "\"tag_name\"");
+
+        char name[96];
+        const char *after_name = find_string(after_tag, "\"name\"", name, sizeof name);
+        if (!after_name || (next && after_name > next)) name[0] = '\0';
+
+        uint32_t b = pong_gh_build_number(name, tag);
+        if (b > best && strlen(tag) < cap) {
+            best = b;
+            strcpy(out_tag, tag);
+        }
+        p = next;
+    }
+    return best;
 }
