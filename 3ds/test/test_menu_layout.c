@@ -115,6 +115,37 @@ int main(void)
         check(label_bottom <= HINT_Y && hint_bottom <= r->h, NAME[i], d);
     }
 
+    /*
+     * The utility row's single centred label, at y+7 scale 0.5.
+     *
+     * The two-line check below only ever looked at the primary rows, so nothing
+     * verified that NAME/SERVER/SOURCE/UPDATE could hold their own text.
+     */
+    printf("\n=== a single label fits its button ===\n");
+    for (int i = MENU_LOCAL_2P + 1; i < MENU_COUNT; i++) {
+        const PongRect *r = &PONG_MENU_RECT[i];
+        float bottom = 7.0f + LINE_PX(0.5f);
+        snprintf(d, sizeof d, "text ends %.1f in %.0f", bottom, r->h);
+        check(bottom <= r->h, NAME[i], d);
+    }
+
+    /*
+     * Nothing may reach the status line.
+     *
+     * This is the check that was missing when the utility row was moved down
+     * and grown to 28px: it ended at 218 while the server address starts at
+     * 213, so the address -- the one line you need when a connection fails --
+     * had buttons drawn through it. Reported as "the bottom text where it says
+     * server and stuff slightly overlaps with the bottom of the buttons".
+     */
+    printf("\n=== nothing overlaps the status line ===\n");
+    for (int i = 0; i < MENU_COUNT; i++) {
+        const PongRect *r = &PONG_MENU_RECT[i];
+        snprintf(d, sizeof d, "ends %.0f, status starts %.0f",
+                 r->y + r->h, PONG_MENU_STATUS_Y);
+        check(r->y + r->h <= PONG_MENU_STATUS_Y, NAME[i], d);
+    }
+
     printf("\n=== the menu leaves the header alone ===\n");
     {
         float top = SCREEN_H;

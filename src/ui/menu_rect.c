@@ -18,17 +18,20 @@
 const PongRect PONG_MENU_RECT[MENU_COUNT] = {
     [MENU_QUICK]    = {  10.0f,  36.0f, 300.0f, 46.0f },
 
-    [MENU_ROOM]     = {  10.0f,  88.0f, 146.0f, 44.0f },
-    [MENU_BOT]      = { 164.0f,  88.0f, 146.0f, 44.0f },
+    [MENU_ROOM]     = {  10.0f,  86.0f, 146.0f, 42.0f },
+    [MENU_BOT]      = { 164.0f,  86.0f, 146.0f, 42.0f },
 
-    [MENU_LOCAL_AI] = {  10.0f, 138.0f, 146.0f, 44.0f },
-    [MENU_LOCAL_2P] = { 164.0f, 138.0f, 146.0f, 44.0f },
+    [MENU_LOCAL_AI] = {  10.0f, 132.0f, 146.0f, 42.0f },
+    [MENU_LOCAL_2P] = { 164.0f, 132.0f, 146.0f, 42.0f },
 
-    /* Four utility buttons across 300px: 72 wide with 4px gaps. */
-    [MENU_NAME]   = {  10.0f, 190.0f,  72.0f, 28.0f },
-    [MENU_SERVER] = {  86.0f, 190.0f,  72.0f, 28.0f },
-    [MENU_SOURCE] = { 162.0f, 190.0f,  72.0f, 28.0f },
-    [MENU_UPDATE] = { 238.0f, 190.0f,  72.0f, 28.0f },
+    /* Four utility buttons across 300px: 72 wide with 4px gaps, and 30 tall,
+     * which is what a thumb needs. They end at 208, above the status line at
+     * PONG_MENU_STATUS_Y -- the previous layout ended at 218 and sat on top of
+     * the server address. */
+    [MENU_NAME]   = {  10.0f, 178.0f,  72.0f, 30.0f },
+    [MENU_SERVER] = {  86.0f, 178.0f,  72.0f, 30.0f },
+    [MENU_SOURCE] = { 162.0f, 178.0f,  72.0f, 30.0f },
+    [MENU_UPDATE] = { 238.0f, 178.0f,  72.0f, 30.0f },
 };
 
 /*
