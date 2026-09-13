@@ -16,6 +16,7 @@
 #include "gfx.h"
 #include "desktop.h"
 #include "pong_local.h"
+#include "lanshape.h"
 #include "net_pc.h"
 #include "client.h"
 #include "pong_proto.h"
@@ -140,6 +141,19 @@ static void begin_connect(App *a, uint8_t mode)
     a->acc_len = 0;
 
     char err[160];
+
+    /* No port means the address could not be resolved to one -- a public
+     * hostname this client has no transport for. Say so here rather than
+     * dialling port 0 and reporting whatever the OS makes of that. */
+    if (a->port == 0) {
+        snprintf(a->error, sizeof a->error,
+                 "no port for %s. This client speaks raw TCP, not HTTPS, so it "
+                 "cannot reach a public server. Set SERVER to a LAN address, or "
+                 "to host:port.", a->server[0] ? a->server : "(unset)");
+        a->hud.screen = DESK_ERROR;
+        return;
+    }
+
     a->hud.screen = DESK_CONNECTING;
     a->net = pong_pc_connect(a->server, a->port, 3000, err, sizeof err);
     if (!a->net) {
@@ -363,11 +377,35 @@ static void commit_editor(App *a)
         if (sscanf(a->edit_buf, "%127[^:]:%u", host, &port) == 2 && port > 0 && port < 65536) {
             snprintf(a->server, sizeof a->server, "%s", host);
             a->port = (uint16_t)port;
+            snprintf(a->toast, sizeof a->toast, "server %s:%u", a->server, (unsigned)a->port);
         } else {
             snprintf(a->server, sizeof a->server, "%s", a->edit_buf);
-            a->port = 8787;   /* the raw TCP port, which is what this build speaks */
+
+            /*
+             * 8787 is assumed for a LAN address and NOT for anything else.
+             *
+             * It used to be assumed for everything, so typing
+             * pong.wardcrew.com quietly became pong.wardcrew.com:8787 and then
+             * failed to connect with nothing to explain why. The port was not
+             * really the problem: this client speaks raw framed TCP and has no
+             * TLS at all, while the public deployment is reachable only over
+             * HTTPS on 443 through a tunnel. No port makes that hostname work
+             * here, so guessing one only buys a more confusing failure.
+             *
+             * A LAN address still gets the convenience, because there 8787 is
+             * genuinely the right answer and typing it every time is noise.
+             */
+            if (pong_lan_shaped(a->server)) {
+                a->port = 8787;
+                snprintf(a->toast, sizeof a->toast, "server %s:%u", a->server, (unsigned)a->port);
+            } else {
+                a->port = 0;
+                snprintf(a->toast, sizeof a->toast,
+                         "%s needs a port - this client speaks raw TCP, not HTTPS, "
+                         "so it cannot reach a public server. Use a LAN address, "
+                         "or type host:port.", a->server);
+            }
         }
-        snprintf(a->toast, sizeof a->toast, "server %s:%u", a->server, (unsigned)a->port);
     } else if (a->edit_target == DESK_ITEM_NAME) {
         snprintf(a->name, sizeof a->name, "%s", a->edit_buf);
         snprintf(a->toast, sizeof a->toast, "you are '%s'", a->name);

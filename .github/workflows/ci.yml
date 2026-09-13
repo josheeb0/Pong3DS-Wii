@@ -63,6 +63,40 @@ jobs:
       - name: Install server deps
         run: npm ci --prefix server --no-audit --no-fund
 
+      # The Windows job compiles an explicit file list instead of going through
+      # pc/Makefile, because adding CMake for one platform was not worth it.
+      # The cost is that the two lists drift, and they have drifted THREE times
+      # -- each one a red Windows build minutes after a green local one, and the
+      # third came after a commit message had already named the risk.
+      #
+      # So the lists are compared instead of remembered. The makefile side comes
+      # from `make print-src`, which is the real $(SRC); the Windows side is cut
+      # from the cl invocation itself. An earlier version of this check derived
+      # both with regexes over the whole file and "passed" while comparing an
+      # empty list against a list containing pong.wardcrew.c -- a guard that
+      # cannot fail is worse than no guard, because it looks like protection.
+      - name: Windows build compiles the same files as pc/Makefile
+        run: |
+          set -euo pipefail
+          mk=$(make -C pc --no-print-directory print-src \
+               | tr ' ' '\n' | grep -E '\.c$' | sed 's#.*/##' | sort -u)
+          ci=$(sed -n '/cl \/nologo/,/\/Fe:/p' .github/workflows/ci.yml \
+               | tr ' ' '\n' | grep -E '\.c$' | sed 's#.*[\\]##' | sort -u)
+
+          echo "pc/Makefile: $(echo $mk)"
+          echo "windows    : $(echo $ci)"
+
+          if [ -z "$mk" ] || [ -z "$ci" ]; then
+            echo "::error::one of the lists came out empty; this check is not working"
+            exit 1
+          fi
+          missing=$(comm -23 <(echo "$mk") <(echo "$ci") || true)
+          if [ -n "$missing" ]; then
+            echo "::error::the Windows build is missing: $(echo $missing)"
+            exit 1
+          fi
+          echo "the Windows job builds every source pc/Makefile does"
+
       - name: Server typecheck
         run: npm run --prefix server typecheck
 
@@ -465,7 +499,7 @@ jobs:
              /DPONG_BUILD_ID=%BUILD_NUM% ^
              /Ipc /Isrc /Isrc\sim /Isrc\gfx /Isrc\ui /I3ds\source\game /I3ds\source\net ^
              /I%SDLDIR%\include ^
-             pc\main_sdl.c pc\net_pc.c ^
+             pc\main_sdl.c pc\net_pc.c pc\lanshape.c ^
              src\gfx\sdl3\gfx_sdl3.c src\ui\desktop.c ^
              src\sim\pong_sim.c src\sim\pong_bot.c src\sim\pong_local.c ^
              3ds\source\net\pong_proto.c 3ds\source\game\client.c ^

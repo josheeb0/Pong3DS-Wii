@@ -63,6 +63,11 @@ typedef struct {
     /* Which difficulty the offline opponent plays at. Shown on the VS AI row
      * and changed with LEFT/RIGHT while that row is selected. */
     int         ai_level;
+    /* True during a two-player match on this device. The bottom screen has to
+     * say different things then: B is player two's DOWN, so the usual
+     * "B = LEAVE" would be telling the player to press the key that moves
+     * their opponent. */
+    bool        two_player_local;
     const char *status_line;   /* transport description */
     const char *detail_line;   /* rtt / hz / opponent */
     const char *message;       /* errors, prompts */
