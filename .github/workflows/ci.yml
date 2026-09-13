@@ -556,7 +556,11 @@ jobs:
           BUILD_NUM: ${{ needs.verify.outputs.build }}
         run: |
           set SDLDIR=sdl3\SDL3-%SDL_VERSION%
-          cl /nologo /std:c11 /O2 /W3 /D_CRT_SECURE_NO_WARNINGS ^
+          rem /MD matches the dynamic CRT mbedTLS was built against. Without
+          rem it cl defaults to the static CRT and the link fails on
+          rem __imp__time64 -- the __imp__ prefix being the tell that the
+          rem library expects those symbols imported from a DLL.
+          cl /nologo /std:c11 /O2 /W3 /MD /D_CRT_SECURE_NO_WARNINGS ^
              /DPONG_BUILD_ID=%BUILD_NUM% ^
              /Ipc /Ipc\vendor\mbedtls\include /Isrc /Isrc\sim /Isrc\audio /Isrc\gfx /Isrc\ui /I3ds\source\game /I3ds\source\net ^
              /I%SDLDIR%\include ^

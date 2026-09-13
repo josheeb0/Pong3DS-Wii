@@ -1,5 +1,19 @@
+/*
+ * glibc hides clock_gettime and CLOCK_MONOTONIC behind this under -std=c99, so
+ * without it the Linux build fails on a struct it cannot see -- while macOS
+ * compiles the same file happily. pc/net_pc.c carries the identical guard for
+ * the identical reason; this is the second time it has bitten.
+ */
+#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
+  #define _POSIX_C_SOURCE 200809L
+#endif
+
 #include "net_https_pc.h"
 #include "https_pc.h"
+
+#if defined(_WIN32)
+#  include <windows.h>
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
