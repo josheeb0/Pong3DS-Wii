@@ -8,14 +8,13 @@
 #        Windows  MSYS2: pacman -S mingw-w64-ucrt-x86_64-SDL3
 
 CC      ?= cc
-# One version string for every platform, from the VERSION file at the root.
+# Stamped by CI with the run number; 0 marks a workstation build.
 BUILD_ID ?= 0
-VERSION  := $(shell cat $(CURDIR)/../VERSION 2>/dev/null || echo 0.0.0)
 
 CFLAGS  ?= -std=c99 -Wall -Wextra -O2 -g
 # Appended, not folded into the ?= above: that one is overridable, and an
 # override would otherwise silently strip the version out of the binary.
-CFLAGS  += -DPONG_BUILD_ID=$(BUILD_ID) -DPONG_VERSION='"$(VERSION)"'
+CFLAGS  += -DPONG_BUILD_ID=$(BUILD_ID)
 ROOT    := ..
 INC     := -I$(ROOT)/src -I$(ROOT)/src/gfx -I$(ROOT)/src/ui -I$(ROOT)/3ds/source/game -I$(ROOT)/3ds/source/net
 # Find SDL3 without requiring PKG_CONFIG_PATH to be set by hand. Homebrew

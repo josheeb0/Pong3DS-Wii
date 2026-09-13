@@ -71,23 +71,6 @@ jobs:
           CC: clang
         run: make -C 3ds/test -f Makefile.host run
 
-      # A version tag that disagrees with the VERSION file would ship binaries
-      # whose menus name a different release than the tag they came from. That
-      # is the same class of drift that let a console read a version as a build
-      # number, so it is checked rather than trusted.
-      - name: VERSION file agrees with the tag
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          FILE=$(cat VERSION)
-          TAG=${GITHUB_REF_NAME#v}
-          if [ "$FILE" != "$TAG" ]; then
-            echo "::error::VERSION says '$FILE' but the tag says '$TAG'."
-            echo "Update VERSION to match before tagging, or the release and"
-            echo "the menus it ships will name different versions."
-            exit 1
-          fi
-          echo "VERSION and tag agree: $FILE"
-
       - name: Install web deps
         run: npm ci --prefix web --no-audit --no-fund
 
@@ -427,14 +410,8 @@ jobs:
           BUILD_NUM: ${{ github.run_number }}
         run: |
           set SDLDIR=sdl3\SDL3-%SDL_VERSION%
-          rem The version comes from the same VERSION file every other platform
-          rem reads, so a Windows build cannot announce a different release.
-          rem \" survives cmd and reaches cl as a real quote, making the macro
-          rem a string literal rather than a bare 1.1.1 the preprocessor would
-          rem choke on.
-          set /p PONGVER=<VERSION
           cl /nologo /std:c11 /O2 /W3 /D_CRT_SECURE_NO_WARNINGS ^
-             /DPONG_BUILD_ID=%BUILD_NUM% /DPONG_VERSION=\"%PONGVER%\" ^
+             /DPONG_BUILD_ID=%BUILD_NUM% ^
              /Ipc /Isrc /Isrc\gfx /Isrc\ui /I3ds\source\game /I3ds\source\net ^
              /I%SDLDIR%\include ^
              pc\main_sdl.c pc\net_pc.c ^
@@ -629,18 +606,24 @@ jobs:
         run: |
           set -euo pipefail
 
+          # One kind of release: build-N, every time, whatever the ref.
+          #
+          # Version tags were tried and caused nothing but trouble. A version
+          # cannot be compared the way an update check needs -- v1.1.1 reads as
+          # 1, which left a console on build 93 insisting it was up to date --
+          # and because a version release is not a prerelease it took the
+          # "Latest" badge and kept it, burying every build published after it.
+          #
+          # NOT a prerelease, deliberately: GitHub refuses to let a prerelease
+          # be Latest, so while builds were prereleases the newest one could
+          # never reach the top of the page no matter how high its number.
+          # Every change gets a higher number, and the highest is the one you
+          # land on.
+          TAG="build-$BUILD_NUM"
+          TITLE="Build $BUILD_NUM"
+          PRERELEASE=""
           if [ "$IS_TAG" = "true" ]; then
-            TAG="$REF_NAME"
-            # The build number goes in the TITLE because the tag cannot carry
-            # it: the 3DS updater compares build numbers, and a version tag
-            # reads as its major version -- v1.1.1 became 1, so a console on
-            # build 93 decided it was current and stayed two releases behind.
-            TITLE="Pong $REF_NAME (build $BUILD_NUM)"
-            PRERELEASE=""
-          else
-            TAG="build-$BUILD_NUM"
-            TITLE="Build $BUILD_NUM"
-            PRERELEASE="--prerelease"
+            echo "::notice::Tag $REF_NAME pushed; publishing as $TAG regardless."
           fi
 
           # Notes are written to a file rather than passed inline, so nothing

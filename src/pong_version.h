@@ -2,23 +2,18 @@
 #define PONG_VERSION_H
 
 /*
- * The human-facing version, and the build number behind it.
+ * The build number, which is the only version this project has.
  *
- * Two numbers because they answer different questions. The VERSION is what a
- * release is called and what a player recognises -- "1.1.1". The BUILD is what
- * the updater compares, and it has to be monotonic, which a version number is
- * not: v1.1.1 sorts below v1.2 but its first digit run is 1, and reading a
- * version as a build is precisely how a console on build 93 spent two releases
- * announcing it was up to date.
+ * Named versions were tried and removed. A version string cannot be compared
+ * the way an update check needs: "v1.1.1" reduces to 1, which is not newer than
+ * build 93, so a console sat two releases behind reporting itself up to date.
+ * A build number is monotonic by construction and every change gets a higher
+ * one, so "newest" and "largest" are the same question.
  *
- * Both are stamped by the build system from one source -- the VERSION file at
- * the repository root, and CI's run number -- so no platform can disagree.
- * The fallbacks below apply only to a workstation build.
+ * Stamped by the build system from CI's run number. The fallback of 0 applies
+ * only to a workstation build, and is deliberately a number no release can ever
+ * have, so a local build is always visibly not a release.
  */
-#ifndef PONG_VERSION
-#define PONG_VERSION "0.0.0"
-#endif
-
 #ifndef PONG_BUILD_ID
 #define PONG_BUILD_ID 0
 #endif

@@ -220,10 +220,7 @@ static void draw_menu(const PongHud *hud)
         snprintf(b, sizeof b, "DEV");
         dyn(b, PONG_ALIGN_RIGHT, 310.0f, 9.0f, 0.5f, CLR_WARN);
     } else {
-        /* The release name here, not the build number: this is the line a
-         * player reads, and "1.1.1" is what the release is called. The build
-         * number is on the title screen for when it matters. */
-        snprintf(b, sizeof b, "v%s", PONG_VERSION);
+        snprintf(b, sizeof b, "BUILD %lu", (unsigned long)hud->build_id);
         dyn(b, PONG_ALIGN_RIGHT, 310.0f, 9.0f, 0.5f, CLR_ACCENT);
     }
 
@@ -522,16 +519,12 @@ static void draw_top(const PongView *view, const PongHud *hud)
         dyn("plays across 3DS, Vita, PC, Mac, Linux and browsers",
             PONG_ALIGN_CENTER, 200.0f, 146.0f, 0.46f, CLR_DIM);
         {
-            /* Both numbers: the release name a player recognises, and the build
-             * the updater compares. A version cannot stand in for a build --
-             * reading one as the other is what left a console two releases
-             * behind insisting it was current. */
+            /* The build number is the only version this project has, and the
+             * only one an update check can compare. Version names were tried
+             * and removed: v1.1.1 reads as 1, which is not newer than 93. */
             char vb[64];
-            if (hud->build_id == 0)
-                snprintf(vb, sizeof vb, "v%s  DEV BUILD", PONG_VERSION);
-            else
-                snprintf(vb, sizeof vb, "v%s  build %lu", PONG_VERSION,
-                         (unsigned long)hud->build_id);
+            if (hud->build_id == 0) snprintf(vb, sizeof vb, "DEV BUILD");
+            else snprintf(vb, sizeof vb, "BUILD %lu", (unsigned long)hud->build_id);
             dyn(vb, 0, 10.0f, 212.0f, 0.46f,
                 hud->build_id == 0 ? CLR_WARN : CLR_DIM);
         }

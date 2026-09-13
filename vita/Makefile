@@ -22,12 +22,11 @@ CC       := arm-vita-eabi-gcc
 # on every line; mine did not, and nothing along the way said so.
 LDFLAGS  := -Wl,-q
 
-# One version string for every platform, from the VERSION file at the root.
+# Stamped by CI with the run number; 0 marks a workstation build.
 BUILD_ID ?= 0
-VERSION  := $(shell cat $(ROOT)/VERSION 2>/dev/null || echo 0.0.0)
 
 CFLAGS   := -std=c99 -Wall -Wextra -O2 -fno-lto \
-            -DPONG_BUILD_ID=$(BUILD_ID) -DPONG_VERSION='"$(VERSION)"' \
+            -DPONG_BUILD_ID=$(BUILD_ID) \
             -I$(ROOT)/src -I$(ROOT)/src/gfx -I$(ROOT)/src/ui -I$(ROOT)/pc \
             -I$(ROOT)/3ds/source/game -I$(ROOT)/3ds/source/net
 # No SceSharedFb here. The vitasdk image's prebuilt libvita2d.a wants it and
