@@ -176,7 +176,10 @@ int main(void)
         tag[0] = name[0] = '\0';
         pong_gh_first_tag(order, tag, sizeof tag);
         pong_gh_first_name(order, name, sizeof name);
-        snprintf(d, sizeof d, "tag='%s' name='%s'", tag, name);
+        /* Widths bounded explicitly: a tag is 64 and a name 96, so the
+         * unbounded form can overrun this buffer. GCC says so; clang does not,
+         * which is why it only surfaced when the machine changed. */
+        snprintf(d, sizeof d, "tag='%.24s' name='%.24s'", tag, name);
         check(strcmp(tag, "v9.9.9") == 0 && strcmp(name, "Build 7") == 0,
               "keys do not match inside each other", d);
     }
