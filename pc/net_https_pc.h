@@ -24,4 +24,7 @@ int  pong_https_net_recv(PongNetHttps *n, uint8_t *buf, size_t cap);
 bool pong_https_net_send(PongNetHttps *n, const uint8_t *buf, size_t len);
 const char *pong_https_net_error(const PongNetHttps *n);
 
+/** How many times the connection had to be re-dialled. Diagnostic only. */
+uint32_t pong_https_net_reconnects(const PongNetHttps *n);
+
 #endif /* PONG_NET_HTTPS_PC_H */
