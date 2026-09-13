@@ -726,8 +726,20 @@ static void draw_bottom(const PongView *view, const PongHud *hud)
             pong_gfx_rect(310.0f, my - 6.0f, 4.0f, 12.0f, CLR_MINE);
         }
 
-        dyn("SLIDE TO MOVE", 0, 10.0f, 220.0f, 0.46f, CLR_FAINT);
-        dyn("B = LEAVE", PONG_ALIGN_RIGHT, 310.0f, 220.0f, 0.46f, CLR_FAINT);
+        /*
+         * The hints have to change for a two-player match, and this line was
+         * WRONG rather than merely missing: B is player two's DOWN there, so
+         * "B = LEAVE" told the player to press the key that moves their
+         * opponent, and leaving looked impossible. The escape hatch existed the
+         * whole time; nothing on screen mentioned it.
+         */
+        if (hud->two_player_local) {
+            dyn("P1 PAD/SLIDE   P2 X/B", 0, 10.0f, 220.0f, 0.46f, CLR_FAINT);
+            dyn("SELECT = LEAVE", PONG_ALIGN_RIGHT, 310.0f, 220.0f, 0.46f, CLR_WARN);
+        } else {
+            dyn("SLIDE TO MOVE", 0, 10.0f, 220.0f, 0.46f, CLR_FAINT);
+            dyn("B = LEAVE", PONG_ALIGN_RIGHT, 310.0f, 220.0f, 0.46f, CLR_FAINT);
+        }
     } else {
         dyn("TAP THE TOUCH SCREEN\nTO CONTINUE", PONG_ALIGN_CENTER,
             160.0f, 92.0f, 0.6f, CLR_TEXT);

@@ -38,8 +38,16 @@ BREW_SDL3 := $(shell brew --prefix sdl3 2>/dev/null)
 PKGPATH   := $(if $(BREW_SDL3),$(BREW_SDL3)/lib/pkgconfig:)$(PKG_CONFIG_PATH)
 SDL       := $(shell PKG_CONFIG_PATH="$(PKGPATH)" pkg-config --cflags --libs sdl3 2>/dev/null)
 
+# Only a hard error for targets that actually compile. `make print-src` has to
+# work on a machine without SDL3 -- CI uses it to check that the Windows job's
+# file list has not drifted from this one, and a check that cannot run outside
+# a fully provisioned box is a check nobody runs before pushing.
 ifeq ($(strip $(SDL)),)
-$(error SDL3 not found. macOS: brew install sdl3 - Debian/Ubuntu: apt install libsdl3-dev)
+  ifneq ($(MAKECMDGOALS),print-src)
+    ifneq ($(MAKECMDGOALS),clean)
+      $(error SDL3 not found. macOS: brew install sdl3 - Debian/Ubuntu: apt install libsdl3-dev)
+    endif
+  endif
 endif
 
 SRC := main_sdl.c net_pc.c lanshape.c \
@@ -58,6 +66,12 @@ all: pong-pc$(EXE)
 
 run: pong-pc$(EXE)
 	./pong-pc$(EXE)
+
+# Used by CI to compare this list against the Windows job's explicit one, which
+# has drifted from it three times. A target rather than parsing the makefile,
+# because $(SRC) is the actual answer and a regex over the file is a guess.
+print-src:
+	@echo $(SRC)
 
 clean:
 	rm -f pong-pc pong-pc.exe

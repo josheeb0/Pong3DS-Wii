@@ -772,6 +772,8 @@ int main(void)
         hud.screen = app.screen;
         hud.frame = app.frame;
         hud.ai_level = app.ai_level;
+        hud.two_player_local = app.in_local &&
+                               app.local.mode == PONG_LOCAL_VS_HUMAN;
         hud.menu_sel = app.menu_sel;
         hud.build_id = PONG_BUILD_ID;
         /* Only meaningful while waiting in a room someone else must join. */
