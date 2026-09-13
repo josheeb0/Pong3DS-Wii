@@ -654,9 +654,18 @@ jobs:
             gh release delete "$TAG" --yes --cleanup-tag || true
           fi
 
+          # --latest explicitly, rather than letting GitHub infer it.
+          #
+          # GitHub picks Latest by the date of the COMMIT a tag points at, not
+          # by build number. Retagging an old release onto a newer commit is
+          # therefore enough to steal the badge -- which is exactly what
+          # happened: build-108, retagged today, outranked build-120. The badge
+          # is what pins a release to the top of the page, so it is stated
+          # rather than inferred.
           gh release create "$TAG" \
             --title "$TITLE" \
             --notes-file /tmp/notes.md \
+            --latest \
             $PRERELEASE \
             3ds/pong3ds.cia \
             3ds/pong3ds.3dsx \
