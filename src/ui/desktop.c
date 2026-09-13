@@ -9,6 +9,7 @@
  */
 
 #include "desktop.h"
+#include "pong_version.h"
 #include "pong_proto.h"
 
 #include <math.h>
@@ -339,6 +340,16 @@ static void draw_menu(const DeskHud *hud, int out_w, int out_h)
     ty += 26.0f;
     pong_gfx_text(cx, ty, 0.62f, CLR_FAINT, PONG_ALIGN_CENTER,
                   "plays across 3DS, Vita, Windows, macOS, Linux and the browser");
+
+    /* Bottom-left, out of the menu's way: the release name a player recognises
+     * and the build number behind it. A workstation build says so rather than
+     * wearing a number no release will ever have. */
+    {
+        char vb[64];
+        if (PONG_BUILD_ID == 0) snprintf(vb, sizeof vb, "v%s  DEV BUILD", PONG_VERSION);
+        else snprintf(vb, sizeof vb, "v%s  build %d", PONG_VERSION, (int)PONG_BUILD_ID);
+        pong_gfx_text(10.0f, (float)out_h - 18.0f, 0.5f, CLR_FAINT, 0, vb);
+    }
 
     for (int i = 0; i < DESK_ITEM_COUNT; i++) {
         float x, y, w, h;

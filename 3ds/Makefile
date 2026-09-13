@@ -40,7 +40,7 @@ TARGET		:=	pong3ds
 BUILD		:=	build
 SOURCES		:=	source source/net source/game source/util ../src/ui ../src/gfx/3ds
 DATA		:=	data
-INCLUDES	:=	include source source/net source/game source/util ../src/ui ../src/gfx ../src/gfx/3ds vendor/mbedtls/include
+INCLUDES	:=	include source source/net source/game source/util ../src ../src/ui ../src/gfx ../src/gfx/3ds vendor/mbedtls/include
 GRAPHICS	:=	gfx
 #GFXBUILD	:=	$(BUILD)
 ROMFS		:=	romfs
@@ -65,7 +65,11 @@ CFLAGS	:=	-g -Wall -O2 -mword-relocations \
 # if the stamped number matters.
 BUILD_ID ?= 0
 
-CFLAGS	+=	$(INCLUDE) -D__3DS__ -DMBEDTLS_CONFIG_FILE='"mbedtls_config_3ds.h"' -DPONG_BUILD_ID=$(BUILD_ID)
+# The release name, from the VERSION file at the repository root so that every
+# platform shows the same string and none of them can drift.
+VERSION := $(shell cat $(CURDIR)/../VERSION 2>/dev/null || echo 0.0.0)
+
+CFLAGS	+=	$(INCLUDE) -D__3DS__ -DMBEDTLS_CONFIG_FILE='"mbedtls_config_3ds.h"' -DPONG_BUILD_ID=$(BUILD_ID) -DPONG_VERSION='"$(VERSION)"'
 
 CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++11
 

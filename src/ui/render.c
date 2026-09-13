@@ -1,4 +1,5 @@
 #include "render.h"
+#include "pong_version.h"
 #include "pong_proto.h"
 #include "gfx.h"
 
@@ -219,7 +220,10 @@ static void draw_menu(const PongHud *hud)
         snprintf(b, sizeof b, "DEV");
         dyn(b, PONG_ALIGN_RIGHT, 310.0f, 9.0f, 0.5f, CLR_WARN);
     } else {
-        snprintf(b, sizeof b, "BUILD %lu", (unsigned long)hud->build_id);
+        /* The release name here, not the build number: this is the line a
+         * player reads, and "1.1.1" is what the release is called. The build
+         * number is on the title screen for when it matters. */
+        snprintf(b, sizeof b, "v%s", PONG_VERSION);
         dyn(b, PONG_ALIGN_RIGHT, 310.0f, 9.0f, 0.5f, CLR_ACCENT);
     }
 
@@ -511,12 +515,23 @@ static void draw_top(const PongView *view, const PongHud *hud)
 
         dyn("PONG", PONG_ALIGN_CENTER, 200.0f, 66.0f, 1.5f, CLR_ACCENT);
         dyn("M U L T I P L A Y E R", PONG_ALIGN_CENTER, 200.0f, 108.0f, 0.5f, CLR_TEXT);
-        dyn("cross-play with any browser",
+        /* Every platform this actually plays against, not just the browser.
+         * Shorter than the desktop client's wording rather than smaller: this
+         * screen is 400px and the text is already at the size that was called
+         * hard to read, so the words go rather than the scale. */
+        dyn("plays across 3DS, Vita, PC, Mac, Linux and browsers",
             PONG_ALIGN_CENTER, 200.0f, 146.0f, 0.46f, CLR_DIM);
         {
+            /* Both numbers: the release name a player recognises, and the build
+             * the updater compares. A version cannot stand in for a build --
+             * reading one as the other is what left a console two releases
+             * behind insisting it was current. */
             char vb[64];
-            if (hud->build_id == 0) snprintf(vb, sizeof vb, "DEV BUILD");
-            else snprintf(vb, sizeof vb, "BUILD %lu", (unsigned long)hud->build_id);
+            if (hud->build_id == 0)
+                snprintf(vb, sizeof vb, "v%s  DEV BUILD", PONG_VERSION);
+            else
+                snprintf(vb, sizeof vb, "v%s  build %lu", PONG_VERSION,
+                         (unsigned long)hud->build_id);
             dyn(vb, 0, 10.0f, 212.0f, 0.46f,
                 hud->build_id == 0 ? CLR_WARN : CLR_DIM);
         }

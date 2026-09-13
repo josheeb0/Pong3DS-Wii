@@ -71,6 +71,23 @@ jobs:
           CC: clang
         run: make -C 3ds/test -f Makefile.host run
 
+      # A version tag that disagrees with the VERSION file would ship binaries
+      # whose menus name a different release than the tag they came from. That
+      # is the same class of drift that let a console read a version as a build
+      # number, so it is checked rather than trusted.
+      - name: VERSION file agrees with the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          FILE=$(cat VERSION)
+          TAG=${GITHUB_REF_NAME#v}
+          if [ "$FILE" != "$TAG" ]; then
+            echo "::error::VERSION says '$FILE' but the tag says '$TAG'."
+            echo "Update VERSION to match before tagging, or the release and"
+            echo "the menus it ships will name different versions."
+            exit 1
+          fi
+          echo "VERSION and tag agree: $FILE"
+
       - name: Install web deps
         run: npm ci --prefix web --no-audit --no-fund
 
@@ -231,7 +248,7 @@ jobs:
         run: brew install sdl3
 
       - name: Build
-        run: make -C pc
+        run: make -C pc BUILD_ID=${{ github.run_number }}
 
       - name: Bundle SDL3 alongside the binary
         run: |
@@ -333,7 +350,7 @@ jobs:
       - name: Build
         run: |
           export PKG_CONFIG_PATH="$HOME/sdl3-install/lib/pkgconfig:$HOME/sdl3-install/lib64/pkgconfig"
-          make -C pc
+          make -C pc BUILD_ID=${{ github.run_number }}
 
       - name: Bundle SDL3 alongside the binary
         run: |
@@ -406,10 +423,19 @@ jobs:
 
       - name: Build
         shell: cmd
+        env:
+          BUILD_NUM: ${{ github.run_number }}
         run: |
           set SDLDIR=sdl3\SDL3-%SDL_VERSION%
+          rem The version comes from the same VERSION file every other platform
+          rem reads, so a Windows build cannot announce a different release.
+          rem \" survives cmd and reaches cl as a real quote, making the macro
+          rem a string literal rather than a bare 1.1.1 the preprocessor would
+          rem choke on.
+          set /p PONGVER=<VERSION
           cl /nologo /std:c11 /O2 /W3 /D_CRT_SECURE_NO_WARNINGS ^
-             /Ipc /Isrc\gfx /Isrc\ui /I3ds\source\game /I3ds\source\net ^
+             /DPONG_BUILD_ID=%BUILD_NUM% /DPONG_VERSION=\"%PONGVER%\" ^
+             /Ipc /Isrc /Isrc\gfx /Isrc\ui /I3ds\source\game /I3ds\source\net ^
              /I%SDLDIR%\include ^
              pc\main_sdl.c pc\net_pc.c ^
              src\gfx\sdl3\gfx_sdl3.c src\ui\desktop.c ^
@@ -510,7 +536,7 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$VITASDK/bin:$PATH"
-          make -C vita
+          make -C vita BUILD_ID=${{ github.run_number }}
 
       - uses: actions/upload-artifact@v4
         with:
