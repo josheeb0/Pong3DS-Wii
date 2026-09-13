@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   AppBar, Box, Button, Chip, Dialog, DialogContent, DialogTitle, Divider,
   Drawer, IconButton, LinearProgress, Stack, TextField, Toolbar, Tooltip, Typography,
@@ -48,6 +48,24 @@ export default function App() {
   const [debugOpen, setDebugOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  /*
+   * The server's build number, read from /healthz.
+   *
+   * Not carried in WELCOME, because adding a field there means regenerating
+   * both codecs and every client for a number only this panel reads. One fetch
+   * is the proportionate answer. Failure is silent and shows as a dash: this is
+   * diagnostic decoration, and it must never be the reason the page is broken.
+   */
+  const [serverBuild, setServerBuild] = useState<number | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetch('/healthz')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (live && j && typeof j.build === 'number') setServerBuild(j.build); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, []);
+
   const base = useMemo(() => {
     // In dev, Vite proxies /api to the server; in production the server serves
     // this bundle itself. Either way a relative base is correct.
@@ -86,6 +104,19 @@ export default function App() {
               3DS · Vita · Windows · macOS · Linux · browser
             </Box>
           </Typography>
+
+          {/* Always visible, not tucked in the debug drawer. Its whole job is
+              answering "is the thing I am looking at the thing that was just
+              deployed", and a number you have to open a panel to find does not
+              answer that. Dimmed so it stays out of the way while playing. */}
+          <Tooltip title={__BUILD_ID__ === 0
+            ? 'A local build. No published build is ever 0.'
+            : 'The build this page was compiled from. The server\'s own build is in the debug panel; they disagree when a deploy is half-finished or the browser is holding a cached bundle.'}>
+            <Typography variant="body2"
+              sx={{ opacity: 0.5, fontFamily: 'monospace', fontSize: '0.72rem', mr: 0.5 }}>
+              {__BUILD_ID__ === 0 ? 'DEV' : `BUILD ${__BUILD_ID__}`}
+            </Typography>
+          </Tooltip>
 
           {connected && (
             <>
@@ -210,6 +241,15 @@ export default function App() {
             <Row k="snapshot ring" v={String(client.stats().ringSize)} />
             <Row k="newest tick" v={String(client.stats().newestTick)} />
             <Row k="slow mode" v={hud.slowMode ? 'on' : 'off'} />
+          </Stack>
+
+          <Typography variant="overline" color="text.secondary">Build</Typography>
+          <Stack spacing={0.25} sx={{ mb: 2 }}>
+            {/* Two numbers on purpose. They disagree exactly when a deploy is
+                half-finished or a browser is holding a cached bundle, which is
+                the case worth being able to see. */}
+            <Row k="this page" v={__BUILD_ID__ === 0 ? 'dev' : String(__BUILD_ID__)} />
+            <Row k="server" v={serverBuild === null ? '—' : String(serverBuild)} />
           </Stack>
 
           <Typography variant="caption" color="text.secondary">
