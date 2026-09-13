@@ -605,7 +605,11 @@ jobs:
 
           if [ "$IS_TAG" = "true" ]; then
             TAG="$REF_NAME"
-            TITLE="Pong3DS $REF_NAME"
+            # The build number goes in the TITLE because the tag cannot carry
+            # it: the 3DS updater compares build numbers, and a version tag
+            # reads as its major version -- v1.1.1 became 1, so a console on
+            # build 93 decided it was current and stayed two releases behind.
+            TITLE="Pong $REF_NAME (build $BUILD_NUM)"
             PRERELEASE=""
           else
             TAG="build-$BUILD_NUM"

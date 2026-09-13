@@ -68,6 +68,9 @@ static PongUpdateResult check_github(const PongNetConfig *net, uint32_t local_bu
     body[resp.body_len] = '\0';
 
     char tag[64];
+    char rel_name[96] = "";
+    pong_gh_first_name((const char *)body, rel_name, sizeof rel_name);
+
     if (!pong_gh_first_tag((const char *)body, tag, sizeof tag)) {
         /* An empty repository is a normal state, not a fault -- say so, and say
          * what to do, rather than reporting it like a network error. */
@@ -77,7 +80,10 @@ static PongUpdateResult check_github(const PongNetConfig *net, uint32_t local_bu
         return PONG_UPDATE_ERROR;
     }
 
-    out->remote_build = pong_gh_build_from_tag(tag);
+    /* From the name where it says one, because a version tag cannot carry a
+     * build number -- v1.1.1 reads as 1, which is how a console on build 93
+     * came to report itself up to date while two releases behind. */
+    out->remote_build = pong_gh_build_number(rel_name, tag);
     out->remote_protocol = 0;   /* GitHub does not know the protocol version */
 
     snprintf(out->release_url, sizeof out->release_url,

@@ -35,6 +35,13 @@ static void tag_is(const char *json, const char *want, const char *what)
     printf("  ok   %-34s -> %s\n", what, got);
 }
 
+/** Asserts a condition, for the checks that are not a simple value compare. */
+static void check(bool cond, const char *what, const char *detail)
+{
+    if (!cond) { printf("  FAIL %-34s %s\n", what, detail ? detail : ""); fails++; }
+    else printf("  ok   %-34s %s\n", what, detail ? detail : "");
+}
+
 static void build_is(const char *tag, uint32_t want)
 {
     uint32_t got = pong_gh_build_from_tag(tag);
@@ -80,13 +87,36 @@ int main(void)
 
     printf("\n=== a real API response fragment ===\n");
     {
+        /*
+         * Trimmed from a genuine `releases?per_page=1` response, keeping the
+         * parts that can trip a string search: the `upload_url` template with
+         * its {?name,label} suffix, the author object, and -- the one that
+         * matters -- the assets array, where all six files have a "name" of
+         * their own. The release's name must win because it comes first.
+         */
         static const char real[] =
             "[{\"url\":\"https://api.github.com/repos/johndoe6345789/Pong3DS-Wii/releases/12345\","
             "\"assets_url\":\"https://api.github.com/repos/x/y/releases/12345/assets\","
+            "\"upload_url\":\"https://uploads.github.com/repos/x/y/releases/12345/assets{?name,label}\","
             "\"html_url\":\"https://github.com/johndoe6345789/Pong3DS-Wii/releases/tag/build-31\","
-            "\"id\":12345,\"tag_name\":\"build-31\",\"target_commitish\":\"main\","
-            "\"name\":\"Build 31\",\"draft\":false,\"prerelease\":true}]";
+            "\"id\":12345,"
+            "\"author\":{\"login\":\"github-actions[bot]\",\"id\":41898282,"
+            "\"type\":\"Bot\",\"site_admin\":false},"
+            "\"node_id\":\"RE_kwDO\",\"tag_name\":\"build-31\",\"target_commitish\":\"main\","
+            "\"name\":\"Build 31\",\"draft\":false,\"prerelease\":true,"
+            "\"assets\":[{\"id\":1,\"name\":\"pong-pc-linux-x86_64.tar.gz\",\"label\":\"\"},"
+                        "{\"id\":2,\"name\":\"pong3ds.3dsx\",\"label\":\"\"},"
+                        "{\"id\":3,\"name\":\"pong3ds.cia\",\"label\":\"\"}],"
+            "\"body\":\"Build 31 - see the assets below\"}]";
         tag_is(real, "build-31", "real response shape");
+
+        char rn[96] = {0};
+        check(pong_gh_first_name(real, rn, sizeof rn) && strcmp(rn, "Build 31") == 0,
+              "release name, not an asset name", rn);
+
+        char d2[64];
+        snprintf(d2, sizeof d2, "%u", pong_gh_build_number(rn, "build-31"));
+        check(pong_gh_build_number(rn, "build-31") == 31, "build number off the real shape", d2);
     }
 
     printf("\n=== build numbers ===\n");
@@ -97,6 +127,59 @@ int main(void)
     build_is("nightly", 0);       /* no number at all */
     build_is("", 0);
     build_is(NULL, 0);
+
+    printf("\n=== build number, from the name when the tag cannot say ===\n");
+    {
+        /*
+         * Reported from a console: running build 93, the updater said "up to
+         * date (v1.1.1)" and stayed there.
+         *
+         * The tag was the only thing consulted, and a version tag yields its
+         * major number -- so 1 was compared against 93, found not to be newer,
+         * and the console sat two releases behind announcing it was current.
+         * Releases carry the build number in their name for this reason.
+         */
+        const char *versioned =
+            "[{\"tag_name\":\"v1.1.1\",\"name\":\"Pong 1.1.1 (build 95)\","
+            "\"draft\":false}]";
+
+        char tag[64] = {0}, name[96] = {0};
+        check(pong_gh_first_tag(versioned, tag, sizeof tag), "tag from a versioned release", tag);
+        check(pong_gh_first_name(versioned, name, sizeof name), "name from the same release", name);
+
+        char d[96];
+        uint32_t b = pong_gh_build_number(name, tag);
+        snprintf(d, sizeof d, "%u (tag alone would give %u)", b, pong_gh_build_from_tag(tag));
+        check(b == 95, "build number comes from the name", d);
+        check(b > 93, "and is correctly newer than build 93", NULL);
+
+        /* The per-commit form still works, from either field. */
+        const char *per_commit =
+            "[{\"tag_name\":\"build-96\",\"name\":\"Build 96\",\"draft\":false}]";
+        tag[0] = name[0] = '\0';
+        pong_gh_first_tag(per_commit, tag, sizeof tag);
+        pong_gh_first_name(per_commit, name, sizeof name);
+        snprintf(d, sizeof d, "%u", pong_gh_build_number(name, tag));
+        check(pong_gh_build_number(name, tag) == 96, "build-N releases unchanged", d);
+
+        /* A release with no build number anywhere falls back to the tag. */
+        const char *nameless =
+            "[{\"tag_name\":\"build-42\",\"name\":\"\",\"draft\":false}]";
+        tag[0] = name[0] = '\0';
+        pong_gh_first_tag(nameless, tag, sizeof tag);
+        pong_gh_first_name(nameless, name, sizeof name);
+        check(pong_gh_build_number(name, tag) == 42, "falls back to the tag", NULL);
+
+        /* "name" must not be found inside "tag_name". */
+        const char *order =
+            "[{\"name\":\"Build 7\",\"tag_name\":\"v9.9.9\"}]";
+        tag[0] = name[0] = '\0';
+        pong_gh_first_tag(order, tag, sizeof tag);
+        pong_gh_first_name(order, name, sizeof name);
+        snprintf(d, sizeof d, "tag='%s' name='%s'", tag, name);
+        check(strcmp(tag, "v9.9.9") == 0 && strcmp(name, "Build 7") == 0,
+              "keys do not match inside each other", d);
+    }
 
     printf("\n=== update target presets ===\n");
     {
