@@ -66,10 +66,17 @@ else
 endif
 
 ## ------------------------------------------------------------------ tests --
-test: test-proto test-sim
+test: test-proto test-sim test-web
 
 test-sim:
 	cd server && npx vitest run
+
+# The browser's own tests. CI has always run these; `make test` did not, so the
+# clock and sound-drift checks only ever ran after a push. Local and CI running
+# different sets is how a tree ends up green in one place and broken in the
+# other -- the same gap that let the gcc build rot while CI pinned clang.
+test-web:
+	cd web && npx vitest run
 
 # Compiles the 3DS codec with the HOST compiler and checks it against byte
 # vectors the TypeScript encoder produced. Catches a C/TS disagreement on a

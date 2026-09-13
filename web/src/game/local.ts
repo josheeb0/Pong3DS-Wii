@@ -56,6 +56,15 @@ export class LocalMatch {
   targetL = FIELD_H_Q4 >> 1;
   targetR = FIELD_H_Q4 >> 1;
 
+  /*
+   * Told about goals, bounces and the match ending.
+   *
+   * The same kinds the wire carries, so the caller can feed them to the same
+   * sound mapping and an offline match cannot sound different from an online
+   * one.
+   */
+  onEvent: ((kind: number, a: number) => void) | null = null;
+
   constructor(mode: LocalMode, level: AiLevel, seed = (Date.now() & 0x7fffffff) | 1) {
     this.mode = mode;
     this.st = createMatch(seed, C.WIN_SCORE, C.BALL_SPEED_MAX_Q4);
@@ -80,7 +89,8 @@ export class LocalMatch {
         ? this.bot.think(this.st)
         : { targetYQ4: this.targetR, buttons: 0 };
 
-      stepMatch(this.st, { targetYQ4: this.targetL, buttons: 0 }, inR);
+      const events = stepMatch(this.st, { targetYQ4: this.targetL, buttons: 0 }, inR);
+      if (this.onEvent) for (const e of events) this.onEvent(e.kind, e.a);
     }
 
     if (steps >= MAX_STEPS_PER_FRAME) this.accumMs = 0;

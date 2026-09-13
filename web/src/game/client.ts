@@ -33,6 +33,7 @@ import { predictPaddle, stepPaddle, clampQ4, FIELD_H_Q4, PADDLE_HALF_Q4 } from '
 import { SnapshotRing, Clock, TICK_MS, type View } from './interp';
 import { connect, type LadderEvent, type RungName } from '../net/ladder';
 import { LocalMatch, type LocalMode, type AiLevel } from './local';
+import { playSfx, sfxForEvent } from './sfx';
 import type { ClientTransport } from '../net/types';
 
 export interface Hud {
@@ -181,6 +182,11 @@ export class GameClient {
    */
   startLocal(mode: LocalMode, level: AiLevel): void {
     this.localMatch = new LocalMatch(mode, level);
+    /* The local player is always the left paddle, so side 0 decides win/lose. */
+    this.localMatch.onEvent = (kind, a) => {
+      const sfx = sfxForEvent(kind, a, 0);
+      if (sfx) playSfx(sfx);
+    };
     this.lastLocalMs = 0;
     this.myY = FIELD_H_Q4 >> 1;
     this.targetY = FIELD_H_Q4 >> 1;
@@ -322,6 +328,8 @@ export class GameClient {
 
         case MsgType.EVENT: {
           const e = decodeEVENT(f.buf, f.payloadOff);
+          const sfx = sfxForEvent(e.kind, e.a, this.hud.side);
+          if (sfx) playSfx(sfx);
           if (e.kind === EventKind.MATCH_OVER) this.setHud({ status: 'over' });
           if (e.kind === EventKind.OPP_LEFT) this.setHud({ error: 'Opponent left' });
           this.onEvent?.(e.kind, e.a, e.b, e.c);
