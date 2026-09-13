@@ -28,7 +28,9 @@ typedef struct { float x, y, w, h; } PongRect;
 typedef enum {
     MENU_QUICK = 0,   /* quick match: pair with anyone, 3DS vs browser preferred */
     MENU_ROOM,        /* join a room by code, so you can play someone specific */
-    MENU_BOT,         /* practice against the CPU */
+    MENU_BOT,         /* practice against the CPU, on the server */
+    MENU_LOCAL_AI,    /* practice against the CPU, right here -- no server */
+    MENU_LOCAL_2P,    /* two people, one 3DS */
     MENU_NAME,        /* the name the other player sees */
     MENU_SERVER,      /* edit the server address */
     MENU_SOURCE,      /* toggle where updates come from */
@@ -58,6 +60,9 @@ typedef struct {
     const char *room_code;     /* shown while waiting, so it can be read out */
     const char *update_src;    /* "game server" / "GitHub Releases" */
     uint32_t    build_id;
+    /* Which difficulty the offline opponent plays at. Shown on the VS AI row
+     * and changed with LEFT/RIGHT while that row is selected. */
+    int         ai_level;
     const char *status_line;   /* transport description */
     const char *detail_line;   /* rtt / hz / opponent */
     const char *message;       /* errors, prompts */

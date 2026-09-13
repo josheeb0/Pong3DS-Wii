@@ -38,9 +38,9 @@ include $(DEVKITARM)/3ds_rules
 #---------------------------------------------------------------------------------
 TARGET		:=	pong3ds
 BUILD		:=	build
-SOURCES		:=	source source/net source/game source/util ../src/ui ../src/gfx/3ds
+SOURCES		:=	source source/net source/game source/util ../src/ui ../src/sim ../src/gfx/3ds
 DATA		:=	data
-INCLUDES	:=	include source source/net source/game source/util ../src ../src/ui ../src/gfx ../src/gfx/3ds vendor/mbedtls/include
+INCLUDES	:=	include source source/net source/game source/util ../src ../src/sim ../src/ui ../src/gfx ../src/gfx/3ds vendor/mbedtls/include
 GRAPHICS	:=	gfx
 #GFXBUILD	:=	$(BUILD)
 ROMFS		:=	romfs

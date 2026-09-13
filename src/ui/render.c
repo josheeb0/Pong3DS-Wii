@@ -1,6 +1,7 @@
 #include "render.h"
 #include "pong_version.h"
 #include "pong_proto.h"
+#include "pong_bot.h"
 #include "gfx.h"
 
 #define CREDIT_TEXT "made by josheeb0 on github :)"
@@ -117,17 +118,25 @@ static void dyn_wrap(const char *s, int align, float x, float y, float scale,
  * status line. Everything that used to be drawn at 0.29-0.38 is either bigger
  * now or gone.
  */
+/*
+ * Five ways to start a match now, not three, on a screen that is still 320x240.
+ *
+ * The rows drop from 44px to 32 rather than the list scrolling. 30px is the
+ * floor -- it is what a thumb needs, and it is what decided the utility row's
+ * height -- so 32 keeps a margin while fitting five rows and the utility strip
+ * in the 200px between the header and the bottom edge.
+ */
 const PongRect PONG_MENU_RECT[MENU_COUNT] = {
-    [MENU_QUICK]  = {  10.0f,  36.0f, 300.0f, 44.0f },
-    [MENU_ROOM]   = {  10.0f,  84.0f, 300.0f, 44.0f },
-    [MENU_BOT]    = {  10.0f, 132.0f, 300.0f, 44.0f },
-    /* Four utility buttons across 300px: 72 wide with 4px gaps. Still over the
-     * 30px that a thumb needs, which is the constraint that decided the row
-     * height in the first place. */
-    [MENU_NAME]   = {  10.0f, 180.0f,  72.0f, 30.0f },
-    [MENU_SERVER] = {  86.0f, 180.0f,  72.0f, 30.0f },
-    [MENU_SOURCE] = { 162.0f, 180.0f,  72.0f, 30.0f },
-    [MENU_UPDATE] = { 238.0f, 180.0f,  72.0f, 30.0f },
+    [MENU_QUICK]    = {  10.0f,  36.0f, 300.0f, 32.0f },
+    [MENU_ROOM]     = {  10.0f,  71.0f, 300.0f, 32.0f },
+    [MENU_BOT]      = {  10.0f, 106.0f, 300.0f, 32.0f },
+    [MENU_LOCAL_AI] = {  10.0f, 141.0f, 300.0f, 32.0f },
+    [MENU_LOCAL_2P] = {  10.0f, 176.0f, 300.0f, 32.0f },
+    /* Four utility buttons across 300px: 72 wide with 4px gaps. */
+    [MENU_NAME]   = {  10.0f, 212.0f,  72.0f, 24.0f },
+    [MENU_SERVER] = {  86.0f, 212.0f,  72.0f, 24.0f },
+    [MENU_SOURCE] = { 162.0f, 212.0f,  72.0f, 24.0f },
+    [MENU_UPDATE] = { 238.0f, 212.0f,  72.0f, 24.0f },
 };
 
 bool pong_ui_hit(const PongRect *r, float x, float y)
@@ -160,7 +169,9 @@ typedef struct { const char *label; const char *hint; } MenuLabel;
 static const MenuLabel MENU_LABEL[MENU_COUNT] = {
     [MENU_QUICK]  = { "QUICK MATCH", "play whoever is waiting" },
     [MENU_ROOM]   = { "JOIN ROOM",   "same code = same game" },
-    [MENU_BOT]    = { "VS CPU",      "practice offline-ish" },
+    [MENU_BOT]      = { "VS CPU",    "the server's bot" },
+    [MENU_LOCAL_AI] = { "VS AI",     "offline, no server" },
+    [MENU_LOCAL_2P] = { "2 PLAYERS", "D-PAD vs A/B/X/Y" },
     [MENU_NAME]   = { "NAME",        NULL },
     [MENU_SERVER] = { "SERVER",      NULL },
     [MENU_SOURCE] = { "SOURCE",      NULL },
@@ -176,6 +187,17 @@ static void icon_for(int item, float x, float y, PongColor a, PongColor b)
         pong_gfx_rect(x,         y, 2.0f, 12.0f, a);
         pong_gfx_rect(x + 12.0f, y + 3.0f, 2.0f, 12.0f, b);
         pong_gfx_circle(x + 7.0f, y + 7.0f, 2.0f, CLR_BALL);
+        break;
+    case MENU_LOCAL_AI:  /* one paddle and a chip: a machine on this device */
+        pong_gfx_rect(x, y, 2.0f, 12.0f, a);
+        pong_gfx_rect(x + 8.0f, y + 2.0f, 8.0f, 8.0f, b);
+        pong_gfx_rect(x + 10.0f, y + 4.0f, 4.0f, 4.0f, CLR_BG);
+        break;
+    case MENU_LOCAL_2P:  /* two paddles, no ball between: two people, one box */
+        pong_gfx_rect(x,         y, 2.0f, 12.0f, a);
+        pong_gfx_rect(x + 4.0f,  y + 3.0f, 2.0f, 9.0f, a);
+        pong_gfx_rect(x + 10.0f, y + 3.0f, 2.0f, 9.0f, b);
+        pong_gfx_rect(x + 14.0f, y, 2.0f, 12.0f, b);
         break;
     case MENU_ROOM: {  /* a keypad: something you type */
         for (int r = 0; r < 3; r++)
@@ -227,18 +249,28 @@ static void draw_menu(const PongHud *hud)
     for (int i = 0; i < MENU_COUNT; i++) {
         const PongRect *r = &PONG_MENU_RECT[i];
         bool sel = (hud->menu_sel == i);
-        bool primary = (i <= MENU_BOT);
+        bool primary = (i <= MENU_LOCAL_2P);
 
         panel(r, sel ? CLR_BTN_SEL : CLR_BTN, sel ? CLR_ACCENT : CLR_EDGE);
 
         if (primary) {
             icon_for(i, r->x + 16.0f, r->y + (r->h - 14.0f) / 2.0f,
                      sel ? CLR_ACCENT : CLR_DIM, sel ? CLR_ACCENT2 : CLR_DIM);
-            dyn(MENU_LABEL[i].label, 0, r->x + 46.0f, r->y + 4.0f, 0.6f,
+            /* Both lines moved up with the row height: at 32px the old y+24
+             * hint hung 2px past the bottom edge. */
+            dyn(MENU_LABEL[i].label, 0, r->x + 46.0f, r->y + 2.0f, 0.56f,
                 sel ? CLR_TEXT : CLR_DIM);
             if (MENU_LABEL[i].hint) {
-                dyn(MENU_LABEL[i].hint, 0, r->x + 46.0f, r->y + 24.0f, 0.44f,
+                dyn(MENU_LABEL[i].hint, 0, r->x + 46.0f, r->y + 18.0f, 0.42f,
                     sel ? CLR_DIM : CLR_FAINT);
+            }
+            /* The offline opponent's difficulty, on its own row. Changed with
+             * LEFT/RIGHT, which is why it sits where a value would and not in
+             * the hint: a hint is prose, this is a setting. */
+            if (i == MENU_LOCAL_AI) {
+                dyn(pong_bot_level_name((PongBotLevel)hud->ai_level),
+                    PONG_ALIGN_RIGHT, r->x + r->w - 34.0f, r->y + 9.0f, 0.5f,
+                    sel ? CLR_ACCENT : CLR_FAINT);
             }
             /* A chevron on the active row, pointing at the thing A will do. */
             if (sel) {

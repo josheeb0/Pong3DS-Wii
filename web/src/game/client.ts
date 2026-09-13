@@ -32,6 +32,7 @@ import {
 import { predictPaddle, stepPaddle, clampQ4, FIELD_H_Q4, PADDLE_HALF_Q4 } from '../../../shared/sim/paddle';
 import { SnapshotRing, Clock, TICK_MS, type View } from './interp';
 import { connect, type LadderEvent, type RungName } from '../net/ladder';
+import { LocalMatch, type LocalMode, type AiLevel } from './local';
 import type { ClientTransport } from '../net/types';
 
 export interface Hud {
@@ -72,6 +73,11 @@ export class GameClient {
   private myServerTick = 0;
 
   private targetY = FIELD_H_Q4 >> 1;
+
+  /* A match played in this tab. While it exists it is the authority, and the
+   * transport -- if one is even open -- is left entirely alone. */
+  private localMatch: LocalMatch | null = null;
+  private lastLocalMs = 0;
   private inputSeq = 0;
   private lastInputAt = 0;
   private lastPingAt = 0;
@@ -161,6 +167,59 @@ export class GameClient {
     this.transport?.close();
     this.transport = null;
     this.setHud({ status: 'idle' });
+  }
+
+  /* ------------------------------------------------------------- local play */
+
+  /**
+   * Starts a match in this tab.
+   *
+   * No connect and no lobby: the simulation is here. The render loop is started
+   * if it is not already running, because online it only starts once a
+   * transport is open and local play must work with no server at all -- which
+   * is most of the point of having it.
+   */
+  startLocal(mode: LocalMode, level: AiLevel): void {
+    this.localMatch = new LocalMatch(mode, level);
+    this.lastLocalMs = 0;
+    this.myY = FIELD_H_Q4 >> 1;
+    this.targetY = FIELD_H_Q4 >> 1;
+    this.setHud({
+      status: 'playing',
+      side: 0,                       /* the local player is always the left */
+      oppName: mode === 'ai' ? level : 'PLAYER 2',
+      oppPlatform: 0,
+      scoreL: 0, scoreR: 0,
+      phase: 1,
+      error: null,
+    });
+    if (!this.running) { this.running = true; this.loop(); }
+  }
+
+  /** Leaves a local match. The transport, if any, is untouched. */
+  stopLocal(): void {
+    this.localMatch = null;
+    this.view = null;
+    this.setHud({ status: this.transport ? 'lobby' : 'idle' });
+    if (!this.transport) { this.running = false; cancelAnimationFrame(this.raf); }
+  }
+
+  get inLocal(): boolean { return this.localMatch !== null; }
+
+  /** Which kind of local match is running, for "play again". */
+  get localMode(): LocalMode | null { return this.localMatch?.mode ?? null; }
+
+  /** Player two's paddle, which only exists in a two-player local match. */
+  setP2Normalized(t: number): void {
+    if (!this.localMatch) return;
+    const y = Math.round(clampQ4(t, 0, 1) * FIELD_H_Q4);
+    this.localMatch.targetR = clampQ4(y, PADDLE_HALF_Q4, FIELD_H_Q4 - PADDLE_HALF_Q4);
+  }
+
+  nudgeP2(deltaQ4: number): void {
+    if (!this.localMatch) return;
+    this.localMatch.targetR = clampQ4(this.localMatch.targetR + deltaQ4,
+                                      PADDLE_HALF_Q4, FIELD_H_Q4 - PADDLE_HALF_Q4);
   }
 
   /* ------------------------------------------------------------------ input */
@@ -295,6 +354,35 @@ export class GameClient {
     this.raf = requestAnimationFrame(this.loop);
 
     const nowMs = Date.now();
+
+    /*
+     * A local match short-circuits everything below.
+     *
+     * Prediction, interpolation, the render delay and the outbound input all
+     * exist to hide a server being somewhere else. There is no server here, so
+     * the view comes straight out of the simulation and the paddle needs no
+     * predicting -- it IS the authority's paddle.
+     */
+    if (this.localMatch) {
+      const dt = this.lastLocalMs ? Math.max(0, nowMs - this.lastLocalMs) : 0;
+      this.lastLocalMs = nowMs;
+
+      this.localMatch.targetL = this.targetY;
+      this.localMatch.advance(dt);
+
+      const st = this.localMatch.state;
+      this.myY = st.leftYQ4;
+      this.view = this.localMatch.view();
+
+      if (this.hud.scoreL !== st.scoreL || this.hud.scoreR !== st.scoreR ||
+          this.hud.phase !== st.state) {
+        this.setHud({
+          scoreL: st.scoreL, scoreR: st.scoreR, phase: st.state,
+          status: this.localMatch.over ? 'over' : 'playing',
+        });
+      }
+      return;
+    }
 
     // --- own paddle: predicted from the last authoritative position --------
     // Because the server applies the same clamp to the same absolute target,

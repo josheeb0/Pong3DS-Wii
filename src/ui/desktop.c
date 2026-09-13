@@ -11,6 +11,10 @@
 #include "desktop.h"
 #include "pong_version.h"
 #include "pong_proto.h"
+/* For the difficulty names shown on the VS AI row. The UI knows the opponent
+ * has levels; the header keeps the enum out of desktop.h so callers of the UI
+ * do not inherit the simulation. */
+#include "pong_bot.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -109,7 +113,9 @@ typedef struct { const char *label, *hint; } DeskLabel;
 static const DeskLabel ITEM[DESK_ITEM_COUNT] = {
     [DESK_ITEM_QUICK]  = { "QUICK MATCH", "play whoever is waiting" },
     [DESK_ITEM_ROOM]   = { "JOIN ROOM",   "same code = same game" },
-    [DESK_ITEM_BOT]    = { "VS CPU",      "practice against the server bot" },
+    [DESK_ITEM_BOT]      = { "VS CPU",    "practice against the server bot" },
+    [DESK_ITEM_LOCAL_AI] = { "VS AI",     "offline, no server needed" },
+    [DESK_ITEM_LOCAL_2P] = { "2 PLAYERS", "share this device" },
     [DESK_ITEM_SERVER] = { "SERVER",      "where to connect" },
     [DESK_ITEM_NAME]   = { "NAME",        "what the other player sees" },
     [DESK_ITEM_FULLSCREEN] = { "FULLSCREEN", "fill the whole display" },
@@ -134,6 +140,13 @@ static float title_block_h(int out_h)
     float t = title_scale(out_h);
     return (float)out_h * 0.06f + t * 24.0f + 30.0f + 22.0f + 24.0f;
 }
+
+const char *pong_desk_ai_level_name(int level)
+{
+    return pong_bot_level_name((PongBotLevel)level);
+}
+
+int pong_desk_ai_level_count(void) { return PONG_BOT_LEVEL_COUNT; }
 
 bool pong_desk_item_shown(DeskItem it)
 {
@@ -189,7 +202,14 @@ static float menu_row_h(int out_h)
     const int rows = pong_desk_rows();
     float rh = (avail - (rows - 1) * gap) / (float)rows;
     if (rh > 52.0f) rh = 52.0f;
-    if (rh < 34.0f) rh = 34.0f;      /* below this the two lines stop fitting */
+    /* 26, not 34.
+     *
+     * The old floor assumed every row shows a label AND a hint. Nine rows at 34
+     * plus their gaps overflows a 544px Vita screen, and the menu would have
+     * run off the bottom -- the same failure that once put the menu on top of
+     * its own tagline. Below 34 the hint is dropped instead (see draw_menu), so
+     * the label still has room to be read. */
+    if (rh < 26.0f) rh = 26.0f;
     return rh;
 }
 
@@ -391,9 +411,15 @@ static void draw_status_chip(const DeskHud *hud, int out_w, int out_h)
 
 static void draw_hint(const DeskHud *hud, int out_w, int out_h)
 {
+    /* The difficulty hint appears only while the row that has one is selected.
+     * Advertising LEFT/RIGHT on all nine rows would be telling the player about
+     * a control that does nothing on eight of them. */
+    const bool on_ai = (hud->screen == DESK_MENU && hud->sel == DESK_ITEM_LOCAL_AI);
     const char *hint = hud->gamepad
-        ? "LEFT STICK move    CROSS select    CIRCLE back    OPTIONS quit"
-        : "MOUSE or ARROWS move    ENTER select    ESC back";
+        ? (on_ai ? "LEFT STICK move    D-PAD L/R difficulty    CROSS select    CIRCLE back"
+                 : "LEFT STICK move    CROSS select    CIRCLE back    OPTIONS quit")
+        : (on_ai ? "ARROWS move    LEFT/RIGHT difficulty    ENTER select    ESC back"
+                 : "MOUSE or ARROWS move    ENTER select    ESC back");
     pong_gfx_text((float)out_w * 0.5f, (float)out_h - 40.0f, 0.6f, CLR_FAINT,
                   PONG_ALIGN_CENTER, hint);
 }
@@ -511,7 +537,10 @@ static void draw_menu(const DeskHud *hud, int out_w, int out_h)
         const float hint_s  = (h >= 46.0f) ? 0.60f : 0.52f;
         pong_gfx_text(x + 20.0f, y + h * 0.12f, label_s, sel ? CLR_TEXT : CLR_DIM,
                       PONG_ALIGN_LEFT, ITEM[i].label);
-        if (ITEM[i].hint) {
+        /* The hint is the first thing to go when the rows are squeezed: a
+         * label with no room is unreadable, a label with no hint is merely
+         * terse. */
+        if (ITEM[i].hint && h >= 34.0f) {
             pong_gfx_text(x + 20.0f, y + h * 0.12f + label_s * 24.0f + 2.0f, hint_s,
                           sel ? CLR_DIM : CLR_FAINT, PONG_ALIGN_LEFT, ITEM[i].hint);
         }
@@ -525,6 +554,11 @@ static void draw_menu(const DeskHud *hud, int out_w, int out_h)
         if (i == DESK_ITEM_SERVER) val = hud->server_addr;
         if (i == DESK_ITEM_NAME)   val = hud->my_name;
         if (i == DESK_ITEM_FULLSCREEN) val = pong_gfx_fullscreen_get() ? "ON" : "OFF";
+        /* The difficulty rides on the VS AI row as its value, cycled with
+         * left/right. LEFT/RIGHT hints appear only while that row is selected,
+         * because a control that does nothing on eight of nine rows should not
+         * be advertised on all nine. */
+        if (i == DESK_ITEM_LOCAL_AI) val = pong_desk_ai_level_name(hud->ai_level);
         if (val && val[0]) {
             pong_gfx_text(x + w - 20.0f, y + h * 0.5f - 8.0f, 0.62f,
                           sel ? CLR_ACCENT : CLR_FAINT, PONG_ALIGN_RIGHT, val);

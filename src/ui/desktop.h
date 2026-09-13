@@ -33,6 +33,8 @@ typedef enum {
     DESK_ITEM_QUICK = 0,
     DESK_ITEM_ROOM,
     DESK_ITEM_BOT,
+    DESK_ITEM_LOCAL_AI,   /* offline, against the built-in opponent */
+    DESK_ITEM_LOCAL_2P,   /* offline, two people on this device */
     DESK_ITEM_SERVER,
     DESK_ITEM_NAME,
     DESK_ITEM_FULLSCREEN,
@@ -49,6 +51,13 @@ typedef enum {
  * fullscreen row without renumbering everything after it, and without a caller
  * having to know the row it is looking at is not the item it wants.
  */
+
+/** "EASY" / "NORMAL" / "HARD" for the VS AI row's value. Takes an int so the
+ *  UI header does not have to know the simulation's enum. */
+const char *pong_desk_ai_level_name(int level);
+
+/** How many difficulty levels there are, for cycling. */
+int pong_desk_ai_level_count(void);
 
 /** Whether this platform offers the item at all. */
 bool pong_desk_item_shown(DeskItem it);
@@ -73,6 +82,10 @@ DeskItem pong_desk_step(DeskItem cur, int dir);
 typedef struct {
     DeskScreen  screen;
     int         sel;
+    /* Which difficulty the offline opponent plays at. Shown as the value on the
+     * VS AI row and cycled with left/right, rather than occupying a row of its
+     * own -- the menu is already nine rows and the Vita's screen is 544px. */
+    int         ai_level;
 
     const char *my_name;
     const char *opp_name;

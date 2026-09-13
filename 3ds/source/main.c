@@ -22,6 +22,7 @@
 #include "client.h"
 #include "net.h"
 #include "render.h"
+#include "pong_local.h"
 #include "gfx.h"
 #include "config.h"
 #include "update.h"
@@ -68,6 +69,15 @@ typedef struct {
     char addr[PONG_ADDR_MAX];
     char room[PONG_ROOM_CODE_BYTES + 1];
     int  menu_sel;
+
+    /* A match played on this console. When active it is the authority and the
+     * network client is not consulted. */
+    PongLocal   local;
+    bool        in_local;
+    int32_t     p2_target;
+    /* The offline opponent's difficulty. Lives here rather than on the hud
+     * because the hud is rebuilt from scratch every frame. */
+    int         ai_level;
 } App;
 
 static void send_hello(App *a);
@@ -397,6 +407,61 @@ static void pump_network(App *a, uint32_t now_ms)
 
 /* ------------------------------------------------------------------ input */
 
+/* Online a target goes to the network client; locally it goes into the
+ * simulation. One place decides, so touch, circle pad and d-pad need not. */
+static void set_my_target(App *a, int32_t t)
+{
+    if (t < 0) t = 0;
+    if (t > PONG_FIELD_H_Q4) t = PONG_FIELD_H_Q4;
+    if (a->in_local) pong_local_set_target(&a->local, 0, t);
+    else pong_client_set_target(&a->client, t);
+}
+
+static int32_t my_target(const App *a)
+{
+    return a->in_local ? a->local.target_l : a->client.target_y;
+}
+
+/*
+ * Player two, on a console with one set of controls.
+ *
+ * A/B/X/Y, because the right hand is already there and the left half of the
+ * controls stays exactly what a solo player uses -- nothing has to be
+ * relearned to play alone again. X is up and B is down, matching where they
+ * physically sit on the face rather than any convention.
+ */
+static void read_p2_input(App *a, u32 kHeld)
+{
+    int32_t step = 0;
+    if (kHeld & KEY_X) step -= PONG_MAX_PADDLE_SPEED_Q4;
+    if (kHeld & KEY_B) step += PONG_MAX_PADDLE_SPEED_Q4;
+
+    if (step != 0) {
+        int32_t t = a->p2_target + step;
+        if (t < 0) t = 0;
+        if (t > PONG_FIELD_H_Q4) t = PONG_FIELD_H_Q4;
+        a->p2_target = t;
+    }
+    pong_local_set_target(&a->local, 1, a->p2_target);
+}
+
+static void begin_local(App *a, PongLocalMode mode)
+{
+    pong_local_start(&a->local, mode, (PongBotLevel)a->ai_level,
+                     (uint32_t)osGetTime() | 1u, PONG_WIN_SCORE);
+    a->in_local = true;
+    a->p2_target = PONG_FIELD_H_Q4 / 2;
+    a->screen = SCREEN_PLAY;
+    a->client.my_side = 0;
+}
+
+static void end_local(App *a)
+{
+    a->in_local = false;
+    a->local.active = false;
+    a->screen = SCREEN_TITLE;
+}
+
 static void read_input(App *a, u32 kHeld)
 {
     /*
@@ -407,7 +472,7 @@ static void read_input(App *a, u32 kHeld)
     if (kHeld & KEY_TOUCH) {
         touchPosition tp;
         hidTouchRead(&tp);
-        pong_client_set_target(&a->client, (int32_t)tp.py * 32);
+        set_my_target(a, (int32_t)tp.py * 32);
         return;
     }
 
@@ -419,16 +484,16 @@ static void read_input(App *a, u32 kHeld)
     hidCircleRead(&cp);
     if (cp.dy > 20 || cp.dy < -20) {
         int32_t step = (-(int32_t)cp.dy * PONG_MAX_PADDLE_SPEED_Q4) / 156;
-        pong_client_set_target(&a->client, a->client.target_y + step);
+        set_my_target(a, my_target(a) + step);
         return;
     }
 
     /* D-pad moves at exactly the clamp speed. KEY_UP/KEY_DOWN also cover the
      * circle pad, so this is checked after the analog read. */
     if (kHeld & KEY_UP) {
-        pong_client_set_target(&a->client, a->client.target_y - PONG_MAX_PADDLE_SPEED_Q4);
+        set_my_target(a, my_target(a) - PONG_MAX_PADDLE_SPEED_Q4);
     } else if (kHeld & KEY_DOWN) {
-        pong_client_set_target(&a->client, a->client.target_y + PONG_MAX_PADDLE_SPEED_Q4);
+        set_my_target(a, my_target(a) + PONG_MAX_PADDLE_SPEED_Q4);
     }
 }
 
@@ -480,6 +545,9 @@ int main(void)
     pong_config_load(&app.cfg);
     pong_addr_format(&app.cfg.net, app.addr, sizeof app.addr);
     app.screen = SCREEN_TITLE;
+    /* NORMAL, not the zero a memset leaves: EASY as the default would have
+     * every first-time player meet the weakest opponent. */
+    app.ai_level = PONG_BOT_NORMAL;
 
     pong_log_section("configuration");
     pong_log("server address : %s", app.addr);
@@ -534,7 +602,19 @@ int main(void)
          * B and A, so this is deliberately scoped to the screens where there is
          * something to leave.
          */
-        if ((kDown & KEY_B) && app.screen != SCREEN_TITLE) {
+        /*
+         * B is player two's DOWN in a two-player match, so it cannot also mean
+         * "leave" there -- the second player would end the game every time they
+         * moved down. SELECT leaves instead, and only in that one mode, so B
+         * keeps its usual meaning everywhere else.
+         */
+        const bool b_is_player_two = app.in_local &&
+                                     app.local.mode == PONG_LOCAL_VS_HUMAN &&
+                                     app.screen == SCREEN_PLAY;
+
+        if (((kDown & KEY_B) && !b_is_player_two && app.screen != SCREEN_TITLE) ||
+            (b_is_player_two && (kDown & KEY_SELECT))) {
+            if (app.in_local) { end_local(&app); continue; }
             if (app.net) { pong_net_close(app.net); app.net = NULL; }
             pong_client_reset_match(&app.client);
             app.acc_len = 0;
@@ -570,6 +650,14 @@ int main(void)
             if (kDown & KEY_UP)   app.menu_sel = (app.menu_sel + MENU_COUNT - 1) % MENU_COUNT;
 
             int activate = -1;
+            /* LEFT/RIGHT change a row's value, which today is only the
+             * offline opponent's difficulty. */
+            if (app.menu_sel == MENU_LOCAL_AI) {
+                int n = PONG_BOT_LEVEL_COUNT;
+                if (kDown & KEY_RIGHT) app.ai_level = (app.ai_level + 1) % n;
+                if (kDown & KEY_LEFT)  app.ai_level = (app.ai_level + n - 1) % n;
+            }
+
             if (kDown & KEY_A) activate = app.menu_sel;
             if (kDown & KEY_TOUCH) {
                 touchPosition tp;
@@ -577,6 +665,13 @@ int main(void)
                 int hit = pong_ui_menu_hit((float)tp.px, (float)tp.py);
                 if (hit >= 0) { app.menu_sel = hit; activate = hit; }
             }
+
+            /* The local modes need no network at all, so they are dispatched
+             * before the readiness check that the online ones sit behind. On a
+             * console with no wifi the rest of the menu is unusable and these
+             * two still work, which is most of the point of having them. */
+            if (activate == MENU_LOCAL_AI) { begin_local(&app, PONG_LOCAL_VS_AI); activate = -1; }
+            else if (activate == MENU_LOCAL_2P) { begin_local(&app, PONG_LOCAL_VS_HUMAN); activate = -1; }
 
             if (activate >= 0 && net_ready) {
                 app.message[0] = '\0';
@@ -637,7 +732,21 @@ int main(void)
         }
 
         /* ---- network + simulation ---------------------------------------- */
-        if (app.net) {
+        /*
+         * A local match is stepped here instead of the network being pumped.
+         * The authority is in this process, so there is nothing to receive and
+         * nothing to predict -- the view is read straight out of the
+         * simulation, which also means no render delay on a local game.
+         */
+        if (app.in_local) {
+            if (app.screen == SCREEN_PLAY) {
+                read_input(&app, kHeld);
+                if (app.local.mode == PONG_LOCAL_VS_HUMAN) read_p2_input(&app, kHeld);
+            }
+            pong_local_advance(&app.local, 17);
+            if (app.local.sim.state == PONG_SIM_GAME_OVER)
+                app.screen = SCREEN_GAMEOVER;
+        } else if (app.net) {
             pump_network(&app, now);
 
             if (pong_net_state(app.net) == PONG_LINK_FAILED && app.screen != SCREEN_ERROR) {
@@ -654,13 +763,15 @@ int main(void)
         }
 
         PongView view;
-        pong_client_update(&app.client, now, &view);
+        if (app.in_local) pong_local_view(&app.local, &view);
+        else pong_client_update(&app.client, now, &view);
 
         /* ---- hud ---------------------------------------------------------- */
         PongHud hud;
         memset(&hud, 0, sizeof hud);
         hud.screen = app.screen;
         hud.frame = app.frame;
+        hud.ai_level = app.ai_level;
         hud.menu_sel = app.menu_sel;
         hud.build_id = PONG_BUILD_ID;
         /* Only meaningful while waiting in a room someone else must join. */

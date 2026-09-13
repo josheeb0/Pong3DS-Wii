@@ -412,10 +412,11 @@ jobs:
           set SDLDIR=sdl3\SDL3-%SDL_VERSION%
           cl /nologo /std:c11 /O2 /W3 /D_CRT_SECURE_NO_WARNINGS ^
              /DPONG_BUILD_ID=%BUILD_NUM% ^
-             /Ipc /Isrc /Isrc\gfx /Isrc\ui /I3ds\source\game /I3ds\source\net ^
+             /Ipc /Isrc /Isrc\sim /Isrc\gfx /Isrc\ui /I3ds\source\game /I3ds\source\net ^
              /I%SDLDIR%\include ^
              pc\main_sdl.c pc\net_pc.c ^
              src\gfx\sdl3\gfx_sdl3.c src\ui\desktop.c ^
+             src\sim\pong_sim.c src\sim\pong_bot.c src\sim\pong_local.c ^
              3ds\source\net\pong_proto.c 3ds\source\game\client.c ^
              /Fe:pong-pc.exe ^
              /link /LIBPATH:%SDLDIR%\lib\x64 SDL3.lib ws2_32.lib

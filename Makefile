@@ -21,6 +21,10 @@ all: proto server web 3ds
 ## ---------------------------------------------------------------- codegen --
 proto:
 	node tools/gen-protocol.mjs
+	# The simulation trace is regenerated with the protocol, because both are
+	# derived artefacts of the TypeScript and a stale trace would let the C
+	# simulation drift from the server's rules unnoticed.
+	npx tsx tools/gen-sim-trace.ts
 
 ## ----------------------------------------------------------------- server --
 server:

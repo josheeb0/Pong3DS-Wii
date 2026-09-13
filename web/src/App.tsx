@@ -13,6 +13,7 @@ import { JoinMode, Platform, MatchStateName } from '../../shared/gen/protocol';
 import { GameClient } from './game/client';
 import PongCanvas from './components/PongCanvas';
 import type { RungName } from './net/ladder';
+import { AI_LEVELS, type AiLevel } from './game/local';
 
 const PLATFORM_LABEL: Record<number, string> = {
   [Platform.UNKNOWN]: '?',
@@ -56,6 +57,13 @@ export default function App() {
    * is the proportionate answer. Failure is silent and shows as a dash: this is
    * diagnostic decoration, and it must never be the reason the page is broken.
    */
+  /* Remembered, because picking a difficulty then losing and picking again
+   * should not silently reset it. */
+  const [aiLevel, setAiLevel] = useState<AiLevel>(() => {
+    const v = localStorage.getItem('pong.ai') as AiLevel | null;
+    return v && (AI_LEVELS as readonly string[]).includes(v) ? v : 'NORMAL';
+  });
+
   const [serverBuild, setServerBuild] = useState<number | null>(null);
   useEffect(() => {
     let live = true;
@@ -193,10 +201,38 @@ export default function App() {
                 onClick={() => void play(JoinMode.ROOM_CODE, room)}>
                 Join room
               </Button>
+
+              {/* Offline. Deliberately NOT disabled by `busy` and needing no
+                  connection at all: when the server is unreachable these are
+                  the only two things on this page that still work, which is
+                  most of the reason they exist. */}
+              <Button variant="outlined" startIcon={<SmartToyIcon />}
+                onClick={() => client.startLocal('ai', aiLevel)}>
+                Vs AI
+              </Button>
+              <TextField
+                select size="small" label="difficulty" value={aiLevel}
+                onChange={(e) => {
+                  const v = e.target.value as AiLevel;
+                  setAiLevel(v);
+                  localStorage.setItem('pong.ai', v);
+                }}
+                SelectProps={{ native: true }}
+                sx={{ width: 120 }}
+              >
+                {AI_LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
+              </TextField>
+              <Button variant="outlined" startIcon={<GroupsIcon />}
+                onClick={() => client.startLocal('two-player', aiLevel)}>
+                2 players
+              </Button>
             </>
           )}
           {inMatch && (
-            <Button variant="outlined" onClick={() => client.leave()}>Leave match</Button>
+            <Button variant="outlined"
+              onClick={() => (client.inLocal ? client.stopLocal() : client.leave())}>
+              Leave match
+            </Button>
           )}
         </Stack>
 
@@ -206,7 +242,11 @@ export default function App() {
             // implemented it made two same-platform players wait eight seconds
             // every time, and was removed.
             ? 'Waiting for an opponent — 3DS, Vita, desktop or another browser. A CPU opponent is offered after 15s.'
-            : 'Move with the mouse, or ↑/↓ (W/S).'}
+            : client.inLocal && client.localMode === 'two-player'
+              // Two people at one keyboard: the hint has to say whose keys are
+              // whose, because nothing on screen otherwise does.
+              ? 'Player 1: W/S or the mouse.   Player 2: ↑/↓.'
+              : 'Move with the mouse, or ↑/↓ (W/S).'}
         </Typography>
 
         {hud.error && (
@@ -265,7 +305,11 @@ export default function App() {
         </DialogTitle>
         <DialogContent>
           <Typography sx={{ mb: 2 }}>Final score {hud.scoreL} — {hud.scoreR}</Typography>
-          <Button variant="contained" onClick={() => client.join(JoinMode.QUICKMATCH)}>Play again</Button>
+          {/* Again means the same KIND of match: dropping a local player into
+              quickmatch is a surprising thing for that button to do. */}
+          <Button variant="contained" onClick={() => (client.inLocal
+            ? client.startLocal(client.localMode ?? 'ai', aiLevel)
+            : client.join(JoinMode.QUICKMATCH))}>Play again</Button>
         </DialogContent>
       </Dialog>
     </Box>

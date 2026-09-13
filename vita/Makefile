@@ -27,7 +27,7 @@ BUILD_ID ?= 0
 
 CFLAGS   := -std=c99 -Wall -Wextra -O2 -fno-lto \
             -DPONG_BUILD_ID=$(BUILD_ID) \
-            -I$(ROOT)/src -I$(ROOT)/src/gfx -I$(ROOT)/src/ui -I$(ROOT)/pc \
+            -I$(ROOT)/src -I$(ROOT)/src/sim -I$(ROOT)/src/gfx -I$(ROOT)/src/ui -I$(ROOT)/pc \
             -I$(ROOT)/3ds/source/game -I$(ROOT)/3ds/source/net
 # No SceSharedFb here. The vitasdk image's prebuilt libvita2d.a wants it and
 # the image provides no such stub -- the two disagree. CI builds vita2d from
@@ -60,7 +60,10 @@ SRC := main_vita.c net_vita.c ime_vita.c \
        $(ROOT)/src/gfx/vita/gfx_vita.c \
        $(ROOT)/src/ui/desktop.c \
        $(ROOT)/3ds/source/net/pong_proto.c \
-       $(ROOT)/3ds/source/game/client.c
+       $(ROOT)/3ds/source/game/client.c \
+       $(ROOT)/src/sim/pong_sim.c \
+       $(ROOT)/src/sim/pong_bot.c \
+       $(ROOT)/src/sim/pong_local.c
 
 all: $(TARGET).vpk hello.vpk
 

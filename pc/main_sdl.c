@@ -15,6 +15,7 @@
 
 #include "gfx.h"
 #include "desktop.h"
+#include "pong_local.h"
 #include "net_pc.h"
 #include "client.h"
 #include "pong_proto.h"
@@ -29,6 +30,14 @@ typedef struct {
     PongClient  client;
     DeskHud     hud;
     PongView    view;
+
+    /* A match played here rather than on a server. When active, this is the
+     * authority and the network client is not consulted at all. */
+    PongLocal   local;
+    bool        in_local;
+    /* Player two's paddle target, kept here because the network path has no
+     * equivalent -- online there is never a second local player. */
+    int32_t     p2_target;
 
     char        server[128];
     uint16_t    port;
@@ -267,15 +276,64 @@ static void send_input(App *a, uint32_t now)
 
 /* ------------------------------------------------------------------- input */
 
+/*
+ * Where our paddle's target goes.
+ *
+ * Online it goes to the network client, which sends it and predicts from it;
+ * locally it goes straight into the simulation. Routing it in ONE place means
+ * the mouse, the keys and the gamepad do not each need to know which kind of
+ * match is running.
+ */
+static void set_my_target(App *a, int32_t t)
+{
+    if (t < 0) t = 0;
+    if (t > PONG_FIELD_H_Q4) t = PONG_FIELD_H_Q4;
+    if (a->in_local) pong_local_set_target(&a->local, 0, t);
+    else pong_client_set_target(&a->client, t);
+}
+
+/** Our paddle's current target, whichever match is running. */
+static int32_t my_target(const App *a)
+{
+    return a->in_local ? a->local.target_l : a->client.target_y;
+}
+
 static void nudge_paddle(App *a, float dir, float dt)
 {
     /* Speed matched to the server's clamp, so holding a direction tracks what
      * the simulation will actually allow rather than outrunning it. */
     int32_t step = (int32_t)(dir * (float)PONG_MAX_PADDLE_SPEED_Q4 * 60.0f * dt);
-    int32_t t = a->client.target_y + step;
-    if (t < 0) t = 0;
-    if (t > PONG_FIELD_H_Q4) t = PONG_FIELD_H_Q4;
-    pong_client_set_target(&a->client, t);
+    set_my_target(a, my_target(a) + step);
+}
+
+/*
+ * Starts a match on this device.
+ *
+ * No connect, no lobby, no waiting: the simulation is right here, so the menu
+ * goes straight to play. The seed comes from the clock so consecutive matches
+ * do not open with the same serve.
+ */
+static void begin_local(App *a, PongLocalMode mode)
+{
+    pong_local_start(&a->local, mode, (PongBotLevel)a->hud.ai_level,
+                     (uint32_t)SDL_GetTicks() | 1u, PONG_WIN_SCORE);
+    a->in_local = true;
+    a->p2_target = PONG_FIELD_H_Q4 / 2;
+    a->hud.screen = DESK_PLAY;
+    a->hud.my_side = 0;          /* the local player is always the left paddle */
+    /* A pointer, not a copy: level names are string literals with static
+     * lifetime, and the hud holds a borrowed pointer everywhere else too. */
+    a->hud.opp_name = (mode == PONG_LOCAL_VS_AI)
+                    ? pong_desk_ai_level_name(a->hud.ai_level)
+                    : "PLAYER 2";
+}
+
+/** Leaves a local match, without touching the network client. */
+static void end_local(App *a)
+{
+    a->in_local = false;
+    a->local.active = false;
+    a->hud.screen = DESK_MENU;
 }
 
 static void open_editor(App *a, int target)
@@ -334,6 +392,8 @@ static void activate(App *a)
     case DESK_ITEM_SERVER: open_editor(a, DESK_ITEM_SERVER); break;
     case DESK_ITEM_NAME:   open_editor(a, DESK_ITEM_NAME); break;
     case DESK_ITEM_FULLSCREEN: pong_gfx_fullscreen_set(!pong_gfx_fullscreen_get()); break;
+    case DESK_ITEM_LOCAL_AI: begin_local(a, PONG_LOCAL_VS_AI); break;
+    case DESK_ITEM_LOCAL_2P: begin_local(a, PONG_LOCAL_VS_HUMAN); break;
     default: break;
     }
 }
@@ -342,6 +402,10 @@ int main(int argc, char **argv)
 {
     App app;
     memset(&app, 0, sizeof app);
+    /* NORMAL, not the zero the memset leaves. EASY as the default would have
+     * every first-time player meet the weakest opponent and conclude that is
+     * the game. */
+    app.hud.ai_level = PONG_BOT_NORMAL;
     cfg_load(&app);
     pong_client_init(&app.client);
 
@@ -478,6 +542,11 @@ int main(int argc, char **argv)
                 }
                 switch (e.key.key) {
                 case SDLK_ESCAPE:
+                    /* Out of a local match first. Without this ESC would fall
+                     * through to the network path, which has nothing to
+                     * disconnect, and the match would keep running underneath
+                     * the menu. */
+                    if (app.in_local) { end_local(&app); break; }
                     if (app.hud.screen == DESK_MENU) running = false;
                     else leave_match(&app);
                     break;
@@ -489,12 +558,31 @@ int main(int argc, char **argv)
                     if (app.hud.screen == DESK_MENU)
                         app.hud.sel = pong_desk_step(app.hud.sel, +1);
                     break;
+                /* Left and right change a row's VALUE where it has one, which
+                 * today is only the difficulty. Cycling it in place keeps the
+                 * menu at nine rows; a DIFFICULTY row of its own would not fit
+                 * the Vita's screen alongside everything else. */
+                case SDLK_LEFT:
+                case SDLK_RIGHT:
+                    if (app.hud.screen == DESK_MENU &&
+                        app.hud.sel == DESK_ITEM_LOCAL_AI) {
+                        int n = pong_desk_ai_level_count();
+                        app.hud.ai_level = (e.key.key == SDLK_RIGHT)
+                                         ? (app.hud.ai_level + 1) % n
+                                         : (app.hud.ai_level + n - 1) % n;
+                    }
+                    break;
                 case SDLK_RETURN:
                     if (app.hud.screen == DESK_MENU) {
                         if (app.hud.sel == DESK_ITEM_QUIT) running = false;
                         else activate(&app);
                     } else if (app.hud.screen == DESK_GAMEOVER) {
-                        begin_connect(&app, PONG_JOIN_MODE_QUICKMATCH);
+                        /* Play again means the same KIND of match. Dropping a
+                         * local player into quickmatch because that is what the
+                         * online path did would be a surprising thing for a
+                         * button labelled "again" to do. */
+                        if (app.in_local) begin_local(&app, app.local.mode);
+                        else begin_connect(&app, PONG_JOIN_MODE_QUICKMATCH);
                     }
                     break;
                 default: break;
@@ -550,8 +638,7 @@ int main(int argc, char **argv)
                     int w = 0, h = 0;
                     pong_gfx_output_size(&w, &h);
                     (void)w;
-                    pong_client_set_target(&app.client,
-                                           pong_desk_paddle_from_mouse(e.motion.y, h));
+                    set_my_target(&app, pong_desk_paddle_from_mouse(e.motion.y, h));
                 }
                 break;
 
@@ -563,9 +650,35 @@ int main(int argc, char **argv)
          * continuously, where the mouse sets it absolutely. */
         if (!app.editing && app.hud.screen == DESK_PLAY) {
             const bool *keys = SDL_GetKeyboardState(NULL);
+            /*
+             * With two people at one keyboard the keys split: W/S on the left
+             * of the board drives the left paddle, the arrow cluster on the
+             * right drives the right one. Everywhere else both sets drive the
+             * only paddle there is, because taking half of them away from a
+             * solo player to keep the code uniform would be worse.
+             */
+            const bool two_up = app.in_local &&
+                                app.local.mode == PONG_LOCAL_VS_HUMAN;
+
+            if (two_up) {
+                float d2 = 0.0f;
+                if (keys[SDL_SCANCODE_UP]) d2 -= 1.0f;
+                if (keys[SDL_SCANCODE_DOWN]) d2 += 1.0f;
+                if (d2 != 0.0f) {
+                    int32_t step = (int32_t)(d2 * (float)PONG_MAX_PADDLE_SPEED_Q4 * 60.0f * dt);
+                    int32_t t = app.p2_target + step;
+                    if (t < 0) t = 0;
+                    if (t > PONG_FIELD_H_Q4) t = PONG_FIELD_H_Q4;
+                    app.p2_target = t;
+                }
+                pong_local_set_target(&app.local, 1, app.p2_target);
+            }
+
             float dir = 0.0f;
-            if (keys[SDL_SCANCODE_UP] || keys[SDL_SCANCODE_W]) dir -= 1.0f;
-            if (keys[SDL_SCANCODE_DOWN] || keys[SDL_SCANCODE_S]) dir += 1.0f;
+            if (keys[SDL_SCANCODE_W]) dir -= 1.0f;
+            if (keys[SDL_SCANCODE_S]) dir += 1.0f;
+            if (!two_up && keys[SDL_SCANCODE_UP]) dir -= 1.0f;
+            if (!two_up && keys[SDL_SCANCODE_DOWN]) dir += 1.0f;
 
             if (app.pad) {
                 float ay = (float)SDL_GetGamepadAxis(app.pad, SDL_GAMEPAD_AXIS_LEFTY) / 32767.0f;
@@ -616,6 +729,19 @@ int main(int argc, char **argv)
         app.hud.frame++;
 
         pong_gfx_frame_begin();
+        /*
+         * A local match is advanced here, from real elapsed time, and its view
+         * is read straight out of the simulation -- no snapshot ring, no render
+         * delay, no extrapolation. Those exist to hide a server being
+         * elsewhere, and there is no server here.
+         */
+        if (app.in_local) {
+            pong_local_advance(&app.local, (uint32_t)(dt * 1000.0f));
+            pong_local_view(&app.local, &app.view);
+            if (app.local.sim.state == PONG_SIM_GAME_OVER)
+                app.hud.screen = DESK_GAMEOVER;
+        }
+
         pong_desk_frame(&app.view, &app.hud);
         pong_gfx_frame_end();
 

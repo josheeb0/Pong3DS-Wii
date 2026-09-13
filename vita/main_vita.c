@@ -21,6 +21,7 @@
 
 #include "gfx.h"
 #include "desktop.h"
+#include "pong_local.h"
 #include "net_pc.h"
 #include "ime_vita.h"
 #include "client.h"
@@ -59,6 +60,12 @@ typedef struct {
     char        edit_buf[128];
 
     uint32_t    fps, fps_count, fps_window;
+
+    /* A match played on this Vita. When active it is the authority and the
+     * network client is not consulted. */
+    PongLocal   local;
+    bool        in_local;
+    int32_t     p2_target;
 } App;
 
 static void vlog(const char *msg)
@@ -282,13 +289,53 @@ static void send_input(App *a, uint32_t now)
 
 /* ------------------------------------------------------------------- input */
 
+/* Online a target goes to the network client; locally it goes into the
+ * simulation. Routed once so the stick, the d-pad and the touch screen do not
+ * each have to know which kind of match is running. */
+static void set_my_target(App *a, int32_t t)
+{
+    if (t < 0) t = 0;
+    if (t > PONG_FIELD_H_Q4) t = PONG_FIELD_H_Q4;
+    if (a->in_local) pong_local_set_target(&a->local, 0, t);
+    else pong_client_set_target(&a->client, t);
+}
+
+static int32_t my_target(const App *a)
+{
+    return a->in_local ? a->local.target_l : a->client.target_y;
+}
+
 static void nudge_paddle(App *a, float dir, float dt)
 {
     int32_t step = (int32_t)(dir * (float)PONG_MAX_PADDLE_SPEED_Q4 * 60.0f * dt);
-    int32_t t = a->client.target_y + step;
-    if (t < 0) t = 0;
-    if (t > PONG_FIELD_H_Q4) t = PONG_FIELD_H_Q4;
-    pong_client_set_target(&a->client, t);
+    set_my_target(a, my_target(a) + step);
+}
+
+/*
+ * Starts a match on this device.
+ *
+ * The seed is the clock, so consecutive matches do not open with the same
+ * serve. The local player is always the left paddle, which is why the renderer
+ * needs no special case for offline play.
+ */
+static void begin_local(App *a, PongLocalMode mode)
+{
+    pong_local_start(&a->local, mode, (PongBotLevel)a->hud.ai_level,
+                     now_ms() | 1u, PONG_WIN_SCORE);
+    a->in_local = true;
+    a->p2_target = PONG_FIELD_H_Q4 / 2;
+    a->hud.screen = DESK_PLAY;
+    a->hud.my_side = 0;
+    a->hud.opp_name = (mode == PONG_LOCAL_VS_AI)
+                    ? pong_desk_ai_level_name(a->hud.ai_level)
+                    : "PLAYER 2";
+}
+
+static void end_local(App *a)
+{
+    a->in_local = false;
+    a->local.active = false;
+    a->hud.screen = DESK_MENU;
 }
 
 static void open_editor(App *a, int item)
@@ -351,6 +398,8 @@ static void activate(App *a, bool *running)
     switch (a->hud.sel) {
     case DESK_ITEM_QUICK:  begin_connect(a, PONG_JOIN_MODE_QUICKMATCH); break;
     case DESK_ITEM_BOT:    begin_connect(a, PONG_JOIN_MODE_VS_BOT); break;
+    case DESK_ITEM_LOCAL_AI: begin_local(a, PONG_LOCAL_VS_AI); break;
+    case DESK_ITEM_LOCAL_2P: begin_local(a, PONG_LOCAL_VS_HUMAN); break;
     case DESK_ITEM_ROOM:   open_editor(a, DESK_ITEM_ROOM); break;
     case DESK_ITEM_SERVER: open_editor(a, DESK_ITEM_SERVER); break;
     case DESK_ITEM_NAME:   open_editor(a, DESK_ITEM_NAME); break;
@@ -367,6 +416,7 @@ int main(void)
     App app;
     memset(&app, 0, sizeof app);
     app.editing = -1;
+    app.hud.ai_level = PONG_BOT_NORMAL;
     cfg_load(&app);
     pong_client_init(&app.client);
 
@@ -425,9 +475,21 @@ int main(void)
                     app.hud.sel = pong_desk_step(app.hud.sel, -1);
                 if (pressed & SCE_CTRL_CROSS) activate(&app, &running);
             } else {
-                if (pressed & SCE_CTRL_CIRCLE) leave_match(&app);
+                if (pressed & SCE_CTRL_CIRCLE) {
+                    if (app.in_local) end_local(&app);
+                    else leave_match(&app);
+                }
+                /* Left/right change a row's value, which today is only the
+                 * difficulty on the VS AI row. */
+                if (app.hud.screen == DESK_MENU && app.hud.sel == DESK_ITEM_LOCAL_AI) {
+                    int n = pong_desk_ai_level_count();
+                    if (pressed & SCE_CTRL_RIGHT) app.hud.ai_level = (app.hud.ai_level + 1) % n;
+                    if (pressed & SCE_CTRL_LEFT)  app.hud.ai_level = (app.hud.ai_level + n - 1) % n;
+                }
                 if (app.hud.screen == DESK_GAMEOVER && (pressed & SCE_CTRL_CROSS)) {
-                    begin_connect(&app, PONG_JOIN_MODE_QUICKMATCH);
+                    /* Again means the same KIND of match. */
+                    if (app.in_local) begin_local(&app, app.local.mode);
+                    else begin_connect(&app, PONG_JOIN_MODE_QUICKMATCH);
                 }
             }
 
@@ -449,8 +511,7 @@ int main(void)
                         }
                     }
                 } else if (app.hud.screen == DESK_PLAY) {
-                    pong_client_set_target(&app.client,
-                                           pong_desk_paddle_from_mouse(ty, 544));
+                    set_my_target(&app, pong_desk_paddle_from_mouse(ty, 544));
                 }
             }
             touch_was_down = down;
@@ -464,12 +525,47 @@ int main(void)
                 if (pad.buttons & SCE_CTRL_UP)   dir -= 1.0f;
                 if (pad.buttons & SCE_CTRL_DOWN) dir += 1.0f;
                 if (dir != 0.0f) nudge_paddle(&app, dir, dt);
+
+                /*
+                 * Player two, on a Vita that has to seat both of them.
+                 *
+                 * The RIGHT stick and the face buttons, because the machine has
+                 * a second stick and the two hands are already apart -- the
+                 * left half of the controls stays exactly what a solo player
+                 * uses, so nothing has to be relearned to play alone again.
+                 * Triangle is up and cross is down, matching their physical
+                 * positions rather than any convention.
+                 */
+                if (app.in_local && app.local.mode == PONG_LOCAL_VS_HUMAN) {
+                    float ry = ((float)pad.ry - 128.0f) / 128.0f;
+                    float d2 = 0.0f;
+                    if (ry > 0.2f || ry < -0.2f) d2 += ry;
+                    if (pad.buttons & SCE_CTRL_TRIANGLE) d2 -= 1.0f;
+                    if (pad.buttons & SCE_CTRL_CROSS)    d2 += 1.0f;
+                    if (d2 != 0.0f) {
+                        int32_t step = (int32_t)(d2 * (float)PONG_MAX_PADDLE_SPEED_Q4 * 60.0f * dt);
+                        int32_t t = app.p2_target + step;
+                        if (t < 0) t = 0;
+                        if (t > PONG_FIELD_H_Q4) t = PONG_FIELD_H_Q4;
+                        app.p2_target = t;
+                    }
+                    pong_local_set_target(&app.local, 1, app.p2_target);
+                }
             }
         }
 
-        pump_network(&app, now);
-        send_input(&app, now);
-        pong_client_update(&app.client, now, &app.view);
+        if (app.in_local) {
+            /* The authority is here, so the view comes straight out of the
+             * simulation -- no snapshot ring, no render delay. */
+            pong_local_advance(&app.local, (uint32_t)(dt * 1000.0f));
+            pong_local_view(&app.local, &app.view);
+            if (app.local.sim.state == PONG_SIM_GAME_OVER)
+                app.hud.screen = DESK_GAMEOVER;
+        } else {
+            pump_network(&app, now);
+            send_input(&app, now);
+            pong_client_update(&app.client, now, &app.view);
+        }
 
         if (app.fps_window == 0) app.fps_window = now;
         app.fps_count++;
