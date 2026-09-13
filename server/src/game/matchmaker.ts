@@ -8,7 +8,7 @@
  * left staring at a spinner.
  */
 
-import { C, JoinMode, Platform } from '../../../shared/gen/protocol.js';
+import { C, JoinMode, Platform, PlatformName } from '../../../shared/gen/protocol.js';
 import { Room } from './room.js';
 import type { Session } from '../net/session.js';
 
@@ -34,6 +34,28 @@ const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no I/O/0/1
 interface Waiting {
   session: Session;
   since: number;
+}
+
+/*
+ * Matchmaking logging.
+ *
+ * Added after an afternoon of guessing why two machines would not pair. The
+ * server recorded nothing about who connected or what platform they claimed,
+ * so every question had to be answered by reading the source and inferring --
+ * which produced a correct diagnosis and an incorrect confidence, twice.
+ *
+ * One line per decision. A busy server would not want this at info level, but a
+ * game of Pong is not a busy server and the failure it describes cost far more
+ * than the noise will.
+ */
+function log(msg: string): void {
+  console.log(`[match] ${msg}`);
+}
+
+/** "TESTA (PC)" -- the two facts every pairing question has needed. */
+function who(s: Session): string {
+  const name = s.name && s.name.length > 0 ? s.name : '(unnamed)';
+  return `${name} (${PlatformName[s.platform] ?? s.platform})`;
 }
 
 export class Matchmaker {
@@ -111,10 +133,12 @@ export class Matchmaker {
       room.seat(other.session);
       room.seat(s);
       room.start();
+      log(`match ${room.code}: ${who(other.session)} vs ${who(s)}`);
       return room;
     }
 
     this.queue.push({ session: s, since: nowMs });
+    log(`queued ${who(s)} (waiting: ${this.describeQueue()})`);
     return null;
   }
 
@@ -135,6 +159,12 @@ export class Matchmaker {
       if (sameIdx < 0) sameIdx = i;                    // longest-waiting match
     }
     return sameIdx;
+  }
+
+  /** A one-line summary of who is waiting, for the log. */
+  private describeQueue(): string {
+    if (this.queue.length === 0) return 'nobody';
+    return this.queue.map((w) => who(w.session)).join(', ');
   }
 
   /**
@@ -163,6 +193,7 @@ export class Matchmaker {
       room.seat(first.session);
       room.seat(second.session);
       room.start();
+      log(`match ${room.code}: ${who(first.session)} vs ${who(second.session)} (swept)`);
 
       i--;   // the queue shrank under us
     }
@@ -193,6 +224,7 @@ export class Matchmaker {
         room.seat(w.session);
         room.addBot();
         room.start();
+        log(`match ${room.code}: ${who(w.session)} vs CPU (nobody came)`);
       }
     }
 
