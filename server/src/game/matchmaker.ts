@@ -2,17 +2,30 @@
  * Pairs players into rooms.
  *
  * Prefers pairing ACROSS platforms -- a 3DS with a browser -- because that is
- * the entire point of the project, and a queue of two browsers should not
- * consume a 3DS's opponent while the 3DS waits. After BOT_AFTER_MS a waiting
- * player is offered a bot rather than left staring at a spinner.
+ * the entire point of the project. The preference applies only when both kinds
+ * are actually waiting; nobody is ever made to wait for an opponent who might
+ * not turn up. After BOT_AFTER_MS a lone player is offered a bot rather than
+ * left staring at a spinner.
  */
 
 import { C, JoinMode, Platform } from '../../../shared/gen/protocol.js';
 import { Room } from './room.js';
 import type { Session } from '../net/session.js';
 
-/** Give cross-play a head start before settling for a same-platform match. */
-const CROSS_PLATFORM_WINDOW_MS = 8_000;
+/*
+ * There is no waiting period any more.
+ *
+ * Cross-play used to get an eight second head start before a same-platform
+ * pair was allowed, so that two browsers could not take each other while a 3DS
+ * waited for a human. The intent was good and the cost was not: two desktops
+ * queueing together stared at "waiting for an opponent" for eight seconds every
+ * single time, which reads as broken, while the 3DS it was protecting might
+ * never arrive at all.
+ *
+ * The preference is kept and the delay is gone: a cross-platform opponent is
+ * still chosen ahead of a same-platform one whenever BOTH are actually waiting.
+ * What is no longer done is holding a slot open for someone hypothetical.
+ */
 /** Offer a bot rather than leave someone waiting indefinitely. */
 const BOT_AFTER_MS = 15_000;
 
@@ -106,23 +119,22 @@ export class Matchmaker {
   }
 
   /**
-   * Chooses who to pair with. Cross-platform wins outright; a same-platform
-   * opponent is only taken once they have waited past the window, so a browser
-   * pair does not steal a 3DS's opponent in the first seconds.
+   * Chooses who to pair with: a different platform if one is waiting, otherwise
+   * whoever has waited longest. Never nobody, if the queue holds anyone at all.
+   *
+   * The preference costs nothing because it only applies when there is a real
+   * choice. Making it cost a delay is what made two desktops feel broken.
    */
   private pickOpponent(s: Session, nowMs: number): number {
+    void nowMs;   // no longer time-dependent; kept for call-site symmetry
     let sameIdx = -1;
     for (let i = 0; i < this.queue.length; i++) {
       const w = this.queue[i] as Waiting;
       if (w.session === s || w.session.isClosed) continue;
       if (w.session.platform !== s.platform) return i; // cross-play: take it
-      if (sameIdx < 0) sameIdx = i;
+      if (sameIdx < 0) sameIdx = i;                    // longest-waiting match
     }
-    if (sameIdx >= 0) {
-      const w = this.queue[sameIdx] as Waiting;
-      if (nowMs - w.since >= CROSS_PLATFORM_WINDOW_MS) return sameIdx;
-    }
-    return -1;
+    return sameIdx;
   }
 
   /**
@@ -159,16 +171,11 @@ export class Matchmaker {
   /**
    * Housekeeping: pairs who can now be paired, offers bots, prunes the dead.
    *
-   * The pairing pass is here because pickOpponent used to be consulted only
-   * when someone JOINED. A same-platform pair is deliberately held back for
-   * CROSS_PLATFORM_WINDOW_MS -- but nothing ever revisited the decision, so two
-   * clients of the same platform that queued within that window were each
-   * refused once and then left in the queue indefinitely, until the bot timer
-   * rescued them separately.
-   *
-   * Reported as two desktops that would each pair with a 3DS instantly and
-   * never with each other, which is exactly the shape of "only reconsidered on
-   * arrival".
+   * The pairing pass exists because pickOpponent is consulted when someone
+   * JOINS, and a queue can still end up holding two people who could be paired
+   * -- a session closing, a room filling, anything that changes the queue
+   * without a new arrival. Sweeping here means the queue never sits in a state
+   * where two waiting players could have been matched and were not.
    */
   tick(nowMs: number): void {
     this.pairWaiting(nowMs);

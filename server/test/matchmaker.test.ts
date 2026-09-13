@@ -52,9 +52,11 @@ describe('matchmaker', () => {
     expect(m.queueLength).toBe(0);
   });
 
-  it('pairs two same-platform clients that queued together', () => {
-    // The reported failure: a Mac and a Linux laptop, both Platform.PC,
-    // queueing half a second apart. Neither ever paired.
+  it('pairs two same-platform clients immediately', () => {
+    // The reported failure, and then the reported annoyance: a Mac and a Linux
+    // laptop, both Platform.PC. First they never paired at all; then they
+    // paired only after an eight second hold. Neither is acceptable -- this
+    // must be as immediate as pairing with a 3DS.
     const m = new Matchmaker();
     const t = 1_000;
 
@@ -62,60 +64,60 @@ describe('matchmaker', () => {
     const linux = stubSession(Platform.PC, 'LINUX');
 
     expect(m.join(asSession(mac), JoinMode.QUICKMATCH, '', t)).toBeNull();
-    expect(m.join(asSession(linux), JoinMode.QUICKMATCH, '', t + 500)).toBeNull();
-    expect(m.queueLength).toBe(2);
 
-    // Past the cross-play window, but before the bot timer. They should find
-    // each other rather than each be handed a CPU.
-    m.tick(t + 9_000);
-
+    const room = m.join(asSession(linux), JoinMode.QUICKMATCH, '', t + 500);
+    expect(room).not.toBeNull();     // half a second apart, paired at once
     expect(m.queueLength).toBe(0);
     expect(m.roomCount).toBe(1);
   });
 
-  it('pairs a same-platform arrival once the other has waited out the window', () => {
+  it('pairing does not depend on how long anyone has waited', () => {
     /*
-     * Why Mac vs Windows worked while Mac vs Linux did not, on the same build:
-     * it is entirely down to the gap between pressing QUICK MATCH on each
-     * machine. Walk to the other computer and eight seconds pass on their own,
-     * and the second arrival pairs immediately. Press them in quick succession
-     * and -- before the tick fix -- both waited forever.
-     *
-     * This half always worked, and is here so the explanation is checked
-     * rather than asserted.
+     * The old behaviour made the outcome depend on the gap between pressing
+     * quick match on each machine: over eight seconds it worked, under it did
+     * not. Same build, different result, decided by how fast someone walked
+     * across a room. Timing must not be a variable here at all.
      */
-    const m = new Matchmaker();
-    const t = 1_000;
+    for (const gap of [0, 100, 3_000, 20_000]) {
+      const m = new Matchmaker();
+      const a = stubSession(Platform.PC, 'A');
+      const b = stubSession(Platform.PC, 'B');
 
-    const mac = stubSession(Platform.PC, 'MAC');
-    const win = stubSession(Platform.PC, 'WINDOWS');
+      m.join(asSession(a), JoinMode.QUICKMATCH, '', 1_000);
+      const room = m.join(asSession(b), JoinMode.QUICKMATCH, '', 1_000 + gap);
 
-    expect(m.join(asSession(mac), JoinMode.QUICKMATCH, '', t)).toBeNull();
-
-    // Ten seconds later, which is about how long it takes to cross a room.
-    const room = m.join(asSession(win), JoinMode.QUICKMATCH, '', t + 10_000);
-    expect(room).not.toBeNull();
-    expect(m.queueLength).toBe(0);
+      expect(room, `gap of ${gap}ms`).not.toBeNull();
+    }
   });
 
-  it('still holds a same-platform pair back inside the window', () => {
-    // The hold-back is the point: a 3DS arriving a moment later must still be
-    // able to find a human rather than two browsers having taken each other.
+  it('still prefers a cross-platform opponent when both are waiting', () => {
+    // The preference survives losing the delay: it just no longer costs
+    // anyone a wait. With a PC and a 3DS both queued, an arriving PC should
+    // take the 3DS -- that pairing is the point of the project.
     const m = new Matchmaker();
     const t = 1_000;
 
     const pc1 = stubSession(Platform.PC, 'ONE');
-    const pc2 = stubSession(Platform.PC, 'TWO');
+    const ds = stubSession(Platform.N3DS, 'DS');
 
     m.join(asSession(pc1), JoinMode.QUICKMATCH, '', t);
-    m.join(asSession(pc2), JoinMode.QUICKMATCH, '', t + 200);
+    m.join(asSession(ds), JoinMode.QUICKMATCH, '', t + 100);
+    // Those two pair with each other on arrival -- cross-play, immediate.
+    expect(m.roomCount).toBe(1);
+    expect(m.queueLength).toBe(0);
 
-    m.tick(t + 1_000);            // well inside the window
-    expect(m.queueLength).toBe(2);
+    // Now the ordering that actually tests the preference: two PCs waiting,
+    // then a 3DS arrives and must take one of them rather than be refused.
+    const m2 = new Matchmaker();
+    const a = stubSession(Platform.PC, 'A');
+    const b = stubSession(Platform.PC, 'B');
+    m2.join(asSession(a), JoinMode.QUICKMATCH, '', t);      // queues
+    expect(m2.join(asSession(b), JoinMode.QUICKMATCH, '', t + 50)).not.toBeNull();
 
-    const ds = stubSession(Platform.N3DS, 'DS');
-    const room = m.join(asSession(ds), JoinMode.QUICKMATCH, '', t + 1_100);
-    expect(room).not.toBeNull();  // the 3DS got a human
-    expect(m.queueLength).toBe(1);
+    const c = stubSession(Platform.PC, 'C');
+    const ds2 = stubSession(Platform.N3DS, 'DS2');
+    m2.join(asSession(c), JoinMode.QUICKMATCH, '', t + 100);
+    const room = m2.join(asSession(ds2), JoinMode.QUICKMATCH, '', t + 150);
+    expect(room).not.toBeNull();   // the 3DS found the waiting PC at once
   });
 });
