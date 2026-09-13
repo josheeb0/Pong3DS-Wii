@@ -22,6 +22,9 @@ function stubSession(platform: number, name: string) {
     platform,
     name,
     isClosed: false,
+    // A live connection. Dropping it models a client that has gone away but
+    // whose session is still inside its grace period.
+    sink: { open: true, isOpen() { return this.open; } },
     sent: [] as Uint8Array[],
     seq: 0,
     push(frame: Uint8Array) { this.sent.push(frame); },
@@ -38,6 +41,47 @@ function stubSession(platform: number, name: string) {
 const asSession = (s: ReturnType<typeof stubSession>) => s as any;
 
 describe('matchmaker', () => {
+  it('never pairs someone with a session that has disconnected', () => {
+    /*
+     * Reported as "you can queue with yourself by accident".
+     *
+     * A dropped connection keeps its session alive for GRACE_MS so a wifi blip
+     * cannot forfeit a match in progress. That protection is right for a match
+     * and wrong for a queue: back out, press quick match again, and the new
+     * connection would be paired with the abandoned session -- a match against
+     * yourself, where the other paddle never moves.
+     */
+    const m = new Matchmaker();
+    const t = 1_000;
+
+    const abandoned = stubSession(Platform.PC, 'LINUX');
+    expect(m.join(asSession(abandoned), JoinMode.QUICKMATCH, '', t)).toBeNull();
+
+    // The client goes away. The session lingers, as designed.
+    abandoned.sink.open = false;
+
+    const rejoined = stubSession(Platform.PC, 'LINUX');
+    const room = m.join(asSession(rejoined), JoinMode.QUICKMATCH, '', t + 200);
+
+    expect(room, 'must not pair with a disconnected session').toBeNull();
+  });
+
+  it('drops disconnected players from the queue', () => {
+    // The lingering entry should not sit there either: grace protects a match,
+    // not a place in a queue.
+    const m = new Matchmaker();
+    const t = 1_000;
+
+    const gone = stubSession(Platform.PC, 'GONE');
+    m.join(asSession(gone), JoinMode.QUICKMATCH, '', t);
+    expect(m.queueLength).toBe(1);
+
+    gone.sink.open = false;
+    m.tick(t + 100);
+
+    expect(m.queueLength).toBe(0);
+  });
+
   it('pairs across platforms immediately', () => {
     const m = new Matchmaker();
     const t = 1_000;

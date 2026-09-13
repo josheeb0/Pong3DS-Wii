@@ -52,6 +52,23 @@ function log(msg: string): void {
   console.log(`[match] ${msg}`);
 }
 
+/*
+ * Is this session still on the other end of a connection?
+ *
+ * A dropped connection keeps its session alive for GRACE_MS so that a flaky
+ * 3DS wifi blip cannot forfeit a match in progress. That protection is right
+ * for a MATCH and wrong for a QUEUE: a player who has gone away cannot play,
+ * and leaving their slot warm meant the next person to connect could be paired
+ * with it.
+ *
+ * Reported as being able to queue with yourself: back out, press quick match
+ * again, and the new connection was matched against the session you had just
+ * abandoned -- a game where the other paddle never moves.
+ */
+function connected(s: Session): boolean {
+  return s.sink?.isOpen() === true;
+}
+
 /** "TESTA (PC)" -- the two facts every pairing question has needed. */
 function who(s: Session): string {
   const name = s.name && s.name.length > 0 ? s.name : '(unnamed)';
@@ -155,6 +172,7 @@ export class Matchmaker {
     for (let i = 0; i < this.queue.length; i++) {
       const w = this.queue[i] as Waiting;
       if (w.session === s || w.session.isClosed) continue;
+      if (!connected(w.session)) continue;             // gone, grace or not
       if (w.session.platform !== s.platform) return i; // cross-play: take it
       if (sameIdx < 0) sameIdx = i;                    // longest-waiting match
     }
@@ -176,7 +194,7 @@ export class Matchmaker {
   private pairWaiting(nowMs: number): void {
     for (let i = 0; i < this.queue.length; i++) {
       const w = this.queue[i] as Waiting;
-      if (!w || w.session.isClosed) continue;
+      if (!w || w.session.isClosed || !connected(w.session)) continue;
 
       const j = this.pickOpponent(w.session, nowMs);
       if (j < 0) continue;
@@ -213,8 +231,12 @@ export class Matchmaker {
 
     for (let i = this.queue.length - 1; i >= 0; i--) {
       const w = this.queue[i] as Waiting;
-      if (w.session.isClosed) {
+      if (w.session.isClosed || !connected(w.session)) {
+        // Grace keeps a session alive so a match can be resumed. It does not
+        // hold a place in the queue: there is nothing to resume, and the slot
+        // would otherwise be handed to whoever connects next.
         this.queue.splice(i, 1);
+        log(`dropped ${who(w.session)} from the queue (disconnected)`);
         continue;
       }
       if (nowMs - w.since >= BOT_AFTER_MS) {
