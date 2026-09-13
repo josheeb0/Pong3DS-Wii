@@ -22,6 +22,8 @@
 #include "gfx.h"
 #include "desktop.h"
 #include "pong_local.h"
+#include "audio.h"
+#include "sfx_events.h"
 #include "net_pc.h"
 #include "ime_vita.h"
 #include "client.h"
@@ -236,9 +238,12 @@ static void pump_network(App *a, uint32_t now)
         }
         case PONG_MSG_EVENT: {
             PongEVENT e;
-            if (pong_read_event(fr.payload, fr.length, &e) &&
-                e.kind == PONG_EVENT_KIND_OPP_LEFT) {
-                snprintf(a->toast, sizeof a->toast, "opponent left");
+            if (pong_read_event(fr.payload, fr.length, &e)) {
+                PongSfx sfx;
+                if (pong_sfx_for_event(e.kind, e.a, a->hud.my_side, &sfx))
+                    pong_audio_play(sfx);
+                if (e.kind == PONG_EVENT_KIND_OPP_LEFT)
+                    snprintf(a->toast, sizeof a->toast, "opponent left");
             }
             break;
         }
@@ -318,6 +323,14 @@ static void nudge_paddle(App *a, float dir, float dt)
  * serve. The local player is always the left paddle, which is why the renderer
  * needs no special case for offline play.
  */
+/* A local match's events, turned into noises. */
+static void local_sfx(void *ud, const PongSimEvent *ev)
+{
+    const App *a = (const App *)ud;
+    PongSfx s;
+    if (pong_sfx_for_event(ev->kind, ev->a, a->hud.my_side, &s)) pong_audio_play(s);
+}
+
 static void begin_local(App *a, PongLocalMode mode)
 {
     pong_local_start(&a->local, mode, (PongBotLevel)a->hud.ai_level,
@@ -326,6 +339,8 @@ static void begin_local(App *a, PongLocalMode mode)
     a->p2_target = PONG_FIELD_H_Q4 / 2;
     a->hud.screen = DESK_PLAY;
     a->hud.my_side = 0;
+    a->local.on_event = local_sfx;
+    a->local.event_ud = a;
     a->hud.opp_name = (mode == PONG_LOCAL_VS_AI)
                     ? pong_desk_ai_level_name(a->hud.ai_level)
                     : "PLAYER 2";
@@ -426,6 +441,9 @@ int main(void)
         sceKernelExitProcess(0);
         return 1;
     }
+
+    /* Not fatal: a Vita that cannot open an audio port still plays Pong. */
+    if (!pong_audio_init()) vlog("audio: unavailable; playing silently");
 
     sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
     sceTouchSetSamplingState(SCE_TOUCH_PORT_FRONT, SCE_TOUCH_SAMPLING_STATE_START);
@@ -587,12 +605,14 @@ int main(void)
         app.hud.frame++;
 
         pong_gfx_frame_begin();
+        pong_audio_update();
         pong_desk_frame(&app.view, &app.hud);
         pong_gfx_frame_end();
     }
 
     vlog("stage: exiting");
     if (app.net) pong_pc_close(app.net);
+    pong_audio_exit();
     pong_gfx_exit();
     sceKernelExitProcess(0);
     return 0;

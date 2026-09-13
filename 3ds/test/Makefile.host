@@ -94,6 +94,7 @@ test_menu_layout: test_menu_layout.c ../../src/ui/menu_rect.c ../../src/ui/rende
 
 # The synthesised sound effects. The waveform is deterministic integer
 # arithmetic, so it is checkable with no audio device.
-test_tone: test_tone.c ../../src/audio/tone.c ../../src/audio/mixer.c ../../src/audio/tone.h
-	$(CC) $(CFLAGS) -I../../src/audio -o $@ \
-	  test_tone.c ../../src/audio/tone.c ../../src/audio/mixer.c $(LDFLAGS)
+test_tone: test_tone.c ../../src/audio/tone.c ../../src/audio/mixer.c ../../src/audio/sfx_events.c ../../src/audio/tone.h
+	$(CC) $(CFLAGS) -I../../src/audio -I../../src/sim -I../source/net -I../source/game -o $@ \
+	  test_tone.c ../../src/audio/tone.c ../../src/audio/mixer.c \
+	  ../../src/audio/sfx_events.c $(LDFLAGS)

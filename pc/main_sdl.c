@@ -17,6 +17,8 @@
 #include "desktop.h"
 #include "pong_local.h"
 #include "lanshape.h"
+#include "audio.h"
+#include "sfx_events.h"
 #include "net_pc.h"
 #include "client.h"
 #include "pong_proto.h"
@@ -237,9 +239,12 @@ static void pump_network(App *a, uint32_t now)
         }
         case PONG_MSG_EVENT: {
             PongEVENT e;
-            if (pong_read_event(fr.payload, fr.length, &e) &&
-                e.kind == PONG_EVENT_KIND_OPP_LEFT) {
-                snprintf(a->toast, sizeof a->toast, "opponent left");
+            if (pong_read_event(fr.payload, fr.length, &e)) {
+                PongSfx sfx;
+                if (pong_sfx_for_event(e.kind, e.a, a->hud.my_side, &sfx))
+                    pong_audio_play(sfx);
+                if (e.kind == PONG_EVENT_KIND_OPP_LEFT)
+                    snprintf(a->toast, sizeof a->toast, "opponent left");
             }
             break;
         }
@@ -327,6 +332,15 @@ static void nudge_paddle(App *a, float dir, float dt)
  * goes straight to play. The seed comes from the clock so consecutive matches
  * do not open with the same serve.
  */
+/* Turns a local match's events into noises. Same mapping the online path uses,
+ * so a match does not sound different for being played against a server. */
+static void local_sfx(void *ud, const PongSimEvent *ev)
+{
+    const App *a = (const App *)ud;
+    PongSfx s;
+    if (pong_sfx_for_event(ev->kind, ev->a, a->hud.my_side, &s)) pong_audio_play(s);
+}
+
 static void begin_local(App *a, PongLocalMode mode)
 {
     pong_local_start(&a->local, mode, (PongBotLevel)a->hud.ai_level,
@@ -337,6 +351,9 @@ static void begin_local(App *a, PongLocalMode mode)
     a->hud.my_side = 0;          /* the local player is always the left paddle */
     /* A pointer, not a copy: level names are string literals with static
      * lifetime, and the hud holds a borrowed pointer everywhere else too. */
+    /* After start(), which memsets the struct. */
+    a->local.on_event = local_sfx;
+    a->local.event_ud = a;
     a->hud.opp_name = (mode == PONG_LOCAL_VS_AI)
                     ? pong_desk_ai_level_name(a->hud.ai_level)
                     : "PLAYER 2";
@@ -479,6 +496,10 @@ int main(int argc, char **argv)
     }
 
     if (!pong_gfx_init("Pong - cross-play")) return 1;
+
+    /* Not fatal. A machine with no working audio device still plays Pong, and
+     * refusing to start over a missing speaker would be absurd. */
+    if (!pong_audio_init()) fprintf(stderr, "audio unavailable; playing silently\n");
     if (!SDL_InitSubSystem(SDL_INIT_GAMEPAD)) {
         fprintf(stderr, "gamepad subsystem: %s\n", SDL_GetError());
     }
@@ -780,6 +801,7 @@ int main(int argc, char **argv)
                 app.hud.screen = DESK_GAMEOVER;
         }
 
+        pong_audio_update();
         pong_desk_frame(&app.view, &app.hud);
         pong_gfx_frame_end();
 
@@ -792,6 +814,7 @@ int main(int argc, char **argv)
 
     if (app.pad) SDL_CloseGamepad(app.pad);
     if (app.net) pong_pc_close(app.net);
+    pong_audio_exit();
     pong_gfx_exit();
     return 0;
 }

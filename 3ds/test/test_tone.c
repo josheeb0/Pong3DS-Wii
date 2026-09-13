@@ -19,6 +19,9 @@
 
 #include "../../src/audio/tone.h"
 #include "../../src/audio/mixer.h"
+#include "../../src/audio/sfx_events.h"
+#include "pong_proto.h"
+#include "../../src/sim/pong_sim.h"
 
 static int fails = 0;
 
@@ -116,6 +119,47 @@ int main(void)
     {
         check(pong_tone_samples((PongSfx)PONG_SFX_COUNT) == 0, "count is out of range", NULL);
         check(pong_tone_render((PongSfx)99, buf, PONG_TONE_RATE) == 0, "nonsense id", NULL);
+    }
+
+    printf("\n=== events map to sounds, the same online and off ===\n");
+    {
+        PongSfx got;
+        check(pong_sfx_for_event(PONG_EVENT_KIND_PADDLE_HIT, 0, 0, &got) &&
+              got == PONG_SFX_PADDLE, "paddle hit", NULL);
+        check(pong_sfx_for_event(PONG_EVENT_KIND_WALL_HIT, 0, 0, &got) &&
+              got == PONG_SFX_WALL, "wall hit", NULL);
+        check(pong_sfx_for_event(PONG_EVENT_KIND_GOAL, 0, 0, &got) &&
+              got == PONG_SFX_GOAL, "goal", NULL);
+
+        /* The same event means opposite things to the two players. */
+        check(pong_sfx_for_event(PONG_EVENT_KIND_MATCH_OVER, 0, 0, &got) &&
+              got == PONG_SFX_WIN, "match over, I won", NULL);
+        check(pong_sfx_for_event(PONG_EVENT_KIND_MATCH_OVER, 1, 0, &got) &&
+              got == PONG_SFX_LOSE, "match over, they won", NULL);
+        check(pong_sfx_for_event(PONG_EVENT_KIND_MATCH_OVER, 1, 1, &got) &&
+              got == PONG_SFX_WIN, "and from the other side", NULL);
+
+        /* A flaky connection must not make a noise every time it blips. */
+        check(!pong_sfx_for_event(PONG_EVENT_KIND_OPP_LEFT, 0, 0, &got),
+              "opponent leaving is silent", NULL);
+        check(!pong_sfx_for_event(PONG_EVENT_KIND_OPP_REJOINED, 0, 0, &got),
+              "and so is rejoining", NULL);
+        check(!pong_sfx_for_event(200, 0, 0, &got), "an unknown kind is silent", NULL);
+
+        /*
+         * The local simulation's event kinds and the protocol's must agree,
+         * because this one function is fed by both. If they ever diverged, an
+         * offline match would make the wrong noises -- or none.
+         */
+        /* Cast because they are deliberately DIFFERENT enum types -- one is
+         * the simulation's, one is the wire's -- and the claim being made is
+         * about their numeric values, not their types. gcc is right to want
+         * that said out loud. */
+        check((int)PONG_SIM_EV_PADDLE_HIT == (int)PONG_EVENT_KIND_PADDLE_HIT &&
+              (int)PONG_SIM_EV_WALL_HIT   == (int)PONG_EVENT_KIND_WALL_HIT &&
+              (int)PONG_SIM_EV_GOAL       == (int)PONG_EVENT_KIND_GOAL &&
+              (int)PONG_SIM_EV_MATCH_OVER == (int)PONG_EVENT_KIND_MATCH_OVER,
+              "sim and wire event kinds are the same numbers", NULL);
     }
 
     printf("\n=== the mixer ===\n");

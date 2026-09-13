@@ -23,6 +23,17 @@ bool pong_audio_init(void);
 
 void pong_audio_exit(void);
 
+/**
+ * Called once a frame from the game loop.
+ *
+ * Exists for the 3DS, where ndsp does not pull through a callback: buffers have
+ * to be refilled and requeued by whoever owns the loop. SDL and the Vita are
+ * pulled by a callback and a thread respectively, so it does nothing there --
+ * but every client calls it, because a seam whose contract changes per platform
+ * is not a seam.
+ */
+void pong_audio_update(void);
+
 /** Plays a sound, or does nothing if audio is off or unavailable. */
 void pong_audio_play(PongSfx s);
 

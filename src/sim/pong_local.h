@@ -40,6 +40,15 @@ typedef struct {
 
     /* Fixed-timestep accumulator, in microseconds. */
     uint32_t accum_us;
+
+    /*
+     * Told about goals, bounces and the match ending, so a client can make a
+     * noise. A callback rather than pong_local.c calling the audio seam
+     * directly: this layer is pure and host-testable, and linking it against
+     * audio would drag a sound device into 3ds/test/test_local.c.
+     */
+    void (*on_event)(void *ud, const PongSimEvent *ev);
+    void  *event_ud;
 } PongLocal;
 
 /** Begins a match. `level` is ignored in VS_HUMAN. */
